@@ -29,6 +29,9 @@ partial struct TurretRotationSystem : ISystem
         // The amount of rotation around Y required to do 360 degrees in 2 seconds.
         var rotation = quaternion.RotateY(SystemAPI.Time.DeltaTime * math.PI);
 
+        // The classic C# foreach is what we often refer to as "Idiomatic foreach" (IFE).
+        // Aspects provide a higher level interface than directly accessing component data.
+        // Using IFE with aspects is a powerful and expressive way of writing main thread code.
         // WithAll adds a constraint to the query, specifying that every entity should have such component.
         foreach (var transform in SystemAPI.Query<TransformAspect>().WithAll<Turret>())
         {

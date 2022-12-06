@@ -48,6 +48,9 @@ partial struct TurretShootingSystem : ISystem
     }
 }
 
+// Requiring the Shooting tag component effectively prevents this job from running
+// for the tanks which are in the safe zone.
+[WithAll(typeof(Shooting))]
 [BurstCompile]
 partial struct TurretShoot : IJobEntity
 {
@@ -75,5 +78,7 @@ partial struct TurretShoot : IJobEntity
         {
             Speed = spawnLocalToWorld.Value.Forward() * 20.0f
         });
+        // The line below propagates the color from the turret to the cannon ball.
+        ECB.SetComponent(instance, new URPMaterialPropertyBaseColor { Value = turret.Color });
     }
 }

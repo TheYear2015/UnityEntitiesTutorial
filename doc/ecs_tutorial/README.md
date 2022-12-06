@@ -189,9 +189,6 @@
      
     +        // WithAll adds a constraint to the query, specifying that every entity should have such component.
     +        foreach (var transform in SystemAPI.Query<TransformAspect>().WithAll<Turret>())
-    -        // The classic C# foreach is what we often refer to as "Idiomatic foreach" (IFE).
-    -        // Aspects provide a higher level interface than directly accessing component data.
-    -        // Using IFE with aspects is a powerful and expressive way of writing main thread code.
     -        foreach (var transform in SystemAPI.Query<TransformAspect>())
              {
                  transform.RotateWorld(rotation);
@@ -339,7 +336,7 @@
 
 1. 拖拽 "CannonBall" GameObject 节点到 Project 窗口中的 "Prefabs" 目录，形成一个 prefab 文件。
 
-1. 删除  Hierarchy 窗口中 "SampleScene" 下的 "CannonBall" GameObject 。<p>
+1. 删除 Hierarchy 窗口中 "SampleScene" 下的 "CannonBall" GameObject 。<p>
 ![](images/cannon_ball_prefab.png)
 
 1. 修改 "Scripts/Components" 目录下的 "Turret.cs" 文件：
@@ -605,3 +602,533 @@
 
 1. play 。<p>
 ![](images/turret_shoot.gif)
+
+## 第六步 创建更多的坦克
+
+1. 拖拽 "Tank" GameObject 到 Project 窗口中的 "Assets/Prefabs" 文件夹，生成一个 prefab 文件。
+
+1. 删除 Hierarchy 窗口中的 "Tank" GameObject 。
+
+1. 在目录 "Scripts/Components" 中创建新的脚本文件 "Config.cs" ，填写如下内容：
+
+    ```c#
+    using Unity.Entities;
+
+    struct Config : IComponentData
+    {
+        public Entity TankPrefab;
+        public int TankCount;
+        public float SafeZoneRadius;
+    }
+    ```
+
+1. 在目录 "Scripts/Authoring" 中创建新的脚本文件 "ConfigAuthoring.cs" ，填写如下内容：
+
+    ```c#
+    using Unity.Entities;
+
+    class ConfigAuthoring : UnityEngine.MonoBehaviour
+    {
+        public UnityEngine.GameObject TankPrefab;
+        public int TankCount;
+        public float SafeZoneRadius;
+    }
+
+    class ConfigBaker : Baker<ConfigAuthoring>
+    {
+        public override void Bake(ConfigAuthoring authoring)
+        {
+            AddComponent(new Config
+            {
+                TankPrefab = GetEntity(authoring.TankPrefab),
+                TankCount = authoring.TankCount,
+                SafeZoneRadius = authoring.SafeZoneRadius
+            });
+        }
+    }
+    ```
+
+1. 右键点击 Hierarchy 窗口中的 "EntityScene" ，创建一个 `Create Empty` GameObject 命名为 "Config" 。
+
+1. 添加 "ConfigAuthoring" component 到 "Config" GameObject 。
+
+1. 选择 "Config" GameObject ，设置 "Tank" prefab 到 "TankPrefab" ，"TankCount" 为 20 ，"SafeZoneRadius" 为 15 。<p>
+    ![](images/config_authoring.png)
+
+    | &#x1F4DD; 注意 |
+    | :- |
+    | "SafeZoneRadius" 是在后面的内容里使用。 |
+
+1. 在目录 "Scripts/Systems" 中创建新的脚本文件 "TankSpawningSystem.cs" ，填写如下内容：
+
+    ```c#
+    using Unity.Burst;
+    using Unity.Collections;
+    using Unity.Entities;
+    using Unity.Mathematics;
+    using Unity.Rendering;
+
+    [BurstCompile]
+    partial struct TankSpawningSystem : ISystem
+    {
+        [BurstCompile]
+        public void OnCreate(ref SystemState state)
+        {
+        }
+
+        [BurstCompile]
+        public void OnDestroy(ref SystemState state)
+        {
+        }
+
+        [BurstCompile]
+        public void OnUpdate(ref SystemState state)
+        {
+            var config = SystemAPI.GetSingleton<Config>();
+
+            var ecbSingleton = SystemAPI.GetSingleton<BeginSimulationEntityCommandBufferSystem.Singleton>();
+            var ecb = ecbSingleton.CreateCommandBuffer(state.WorldUnmanaged);
+
+            var vehicles = CollectionHelper.CreateNativeArray<Entity>(config.TankCount, Allocator.Temp);
+            ecb.Instantiate(config.TankPrefab, vehicles);
+
+            // This system should only run once at startup. So it disables itself after one update.
+            state.Enabled = false;
+        }
+    }
+    ```
+
+    | &#x26A0; 注意 |
+    | :- |
+    | 这时进行 play 的话，只会看到一个坦克。事实上是有 20 个坦克，只是它们的运动轨迹重叠在一起了。|
+
+1. 修改 "Scripts/Systems" 目录下的 "TankMovementSystem.cs" 文件：
+
+    ```diff
+     using Unity.Entities;
+     using Unity.Mathematics;
+     using Unity.Transforms;
+     
+     partial class TankMovementSystem : SystemBase
+     {
+         protected override void OnUpdate()
+         {
+             var dt = SystemAPI.Time.DeltaTime;
+     
+             Entities
+                 .WithAll<Tank>()
+    -            .ForEach((TransformAspect transform) =>
+    +            .ForEach((Entity entity, TransformAspect transform) =>
+                 {
+                     var pos = transform.Position;
+     
+    +                // This does not modify the actual position of the tank, only the point at
+    +                // which we sample the 3D noise function. This way, every tank is using a
+    +                // different slice and will move along its own different random flow field.
+    +                pos.y = entity.Index;
+                     var angle = (0.5f + noise.cnoise(pos / 10f)) * 4.0f * math.PI;
+     
+                     var dir = float3.zero;
+                     math.sincos(angle, out dir.x, out dir.z);
+                     transform.Position += dir * dt * 5.0f;
+                     transform.Rotation = quaternion.RotateY(angle);
+     
+                 }).ScheduleParallel();
+         }
+     }
+    ```
+
+1. play 。<p>
+![](images/lots_of_tanks.gif)
+
+## 第七步 给坦克和炮弹上颜色
+
+ECS components can control the inputs to the shaders used for rendering. Creating our own shaders (via shadergraph) and mapping custom ECS components to their inputs is out of scope for this tutorial, but we will use an already existing component called `URPMaterialPropertyBaseColor`. As the name implies, it allows controlling the base color of a standard URP material.
+
+我们的坦克由三部分组成（坦克 tank ，炮塔 turrent ，炮管 cannon ），需要为每个部分添加 `URPMaterialPropertyBaseColor` component 。
+
+1. 进入 play 模式。<p>
+![](images/black_tanks.png)
+
+1.
+    | &#x1F4DD; NOTE |
+    | :- |
+    | The EntityCommandBuffer used by the system below requires a query to specify which entities should be targeted by SetComponentForLinkedEntityGroup.<br>The core of an entity query consists a set of component types, and the query provides a filtered view of only the entities matching that set.<br>For more information about entity queries, see the [package documentation](https://docs.unity3d.com/Packages/com.unity.entities@latest/index.html?subfolder=/manual/ecs_entity_query.html). |
+
+    修改 "Scripts/Systems" 目录下的 "TankSpawningSystem.cs" 文件：
+
+    ```diff
+     using Unity.Burst;
+     using Unity.Collections;
+     using Unity.Entities;
+     using Unity.Mathematics;
+     using Unity.Rendering;
+     
+     [BurstCompile]
+     partial struct TankSpawningSystem : ISystem
+     {
+    +    // Queries should not be created on the spot in OnUpdate, so they are cached in fields.
+    +    EntityQuery m_BaseColorQuery;
+     
+         [BurstCompile]
+         public void OnCreate(ref SystemState state)
+         {
+    +        // This system should not run before the Config singleton has been loaded.
+    +        state.RequireForUpdate<Config>();
+     
+    +        m_BaseColorQuery = state.GetEntityQuery(ComponentType.ReadOnly<URPMaterialPropertyBaseColor>());
+         }
+     
+         [BurstCompile]
+         public void OnDestroy(ref SystemState state)
+         {
+         }
+     
+         [BurstCompile]
+         public void OnUpdate(ref SystemState state)
+         {
+             var config = SystemAPI.GetSingleton<Config>();
+     
+    +        // This system will only run once, so the random seed can be hard-coded.
+    +        // Using an arbitrary constant seed makes the behavior deterministic.
+    +        var random = Random.CreateFromIndex(1234);
+    +        var hue = random.NextFloat();
+     
+    +        // Helper to create any amount of colors as distinct from each other as possible.
+    +        // The logic behind this approach is detailed at the following address:
+    +        // https://martin.ankerl.com/2009/12/09/how-to-create-random-colors-programmatically/
+    +        URPMaterialPropertyBaseColor RandomColor()
+    +        {
+    +            // Note: if you are not familiar with this concept, this is a "local function".
+    +            // You can search for that term on the internet for more information.
+     
+    +            // 0.618034005f == 2 / (math.sqrt(5) + 1) == inverse of the golden ratio
+    +            hue = (hue + 0.618034005f) % 1;
+    +            var color = UnityEngine.Color.HSVToRGB(hue, 1.0f, 1.0f);
+    +            return new URPMaterialPropertyBaseColor { Value = (UnityEngine.Vector4)color };
+    +        }
+     
+             var ecbSingleton = SystemAPI.GetSingleton<BeginSimulationEntityCommandBufferSystem.Singleton>();
+             var ecb = ecbSingleton.CreateCommandBuffer(state.WorldUnmanaged);
+     
+             var vehicles = CollectionHelper.CreateNativeArray<Entity>(config.TankCount, Allocator.Temp);
+             ecb.Instantiate(config.TankPrefab, vehicles);
+     
+    +        // An EntityQueryMask provides an efficient test of whether a specific entity would
+    +        // be selected by an EntityQuery.
+    +        var queryMask = m_BaseColorQuery.GetEntityQueryMask();
+     
+    +        foreach (var vehicle in vehicles)
+    +        {
+    +            // Every prefab root contains a LinkedEntityGroup, a list of all of its entities.
+    +            ecb.SetComponentForLinkedEntityGroup(vehicle, queryMask, RandomColor());
+    +        }
+     
+             state.Enabled = false;
+         }
+     }
+    ```
+
+1. play 。<p>
+![](images/colored_tanks.png)
+
+1. 修改 "Scripts/Authoring" 目录下的 "CannonBallAuthoring.cs" 文件：
+
+    ```diff
+     using Unity.Entities;
+     using Unity.Rendering;
+     
+     class CannonBallAuthoring : UnityEngine.MonoBehaviour
+     {
+     }
+     
+     class CannonBallBaker : Baker<CannonBallAuthoring>
+     {
+         public override void Bake(CannonBallAuthoring authoring)
+         {
+             AddComponent<CannonBall>();
+    +        AddComponent<URPMaterialPropertyBaseColor>();
+         }
+     }
+    ```
+
+1. 修改 "Scripts/Aspects" 目录下的 "TurretAspect.cs" 文件：
+
+    ```diff
+     using Unity.Entities;
+     using Unity.Mathematics;
+     using Unity.Rendering;
+     
+     readonly partial struct TurretAspect : IAspect
+     {
+         readonly RefRO<Turret> m_Turret;
+    +    readonly RefRO<URPMaterialPropertyBaseColor> m_BaseColor;
+     
+         public Entity CannonBallSpawn => m_Turret.ValueRO.CannonBallSpawn;
+         public Entity CannonBallPrefab => m_Turret.ValueRO.CannonBallPrefab;
+    +    public float4 Color => m_BaseColor.ValueRO.Value;
+     }
+    ```
+
+1. 修改 "Scripts/Systems" 目录下的 "TurretShootingSystem.cs" 文件：
+
+    ```diff
+     [BurstCompile]
+     partial struct TurretShoot : IJobEntity
+     {
+         [ReadOnly] public ComponentLookup<LocalToWorldTransform> LocalToWorldTransformFromEntity;
+         public EntityCommandBuffer ECB;
+     
+         void Execute(in TurretAspect turret)
+         {
+             var instance = ECB.Instantiate(turret.CannonBallPrefab);
+             var spawnLocalToWorld = LocalToWorldTransformFromEntity[turret.CannonBallSpawn];
+             var cannonBallTransform = UniformScaleTransform.FromPosition(spawnLocalToWorld.Value.Position);
+     
+             cannonBallTransform.Scale = LocalToWorldTransformFromEntity[turret.CannonBallPrefab].Value.Scale;
+             ECB.SetComponent(instance, new LocalToWorldTransform
+             {
+                 Value = cannonBallTransform
+             });
+             ECB.SetComponent(instance, new CannonBall
+             {
+                 Speed = spawnLocalToWorld.Value.Forward() * 20.0f
+             });
+     
+    +        // The line below propagates the color from the turret to the cannon ball.
+    +        ECB.SetComponent(instance, new URPMaterialPropertyBaseColor { Value = turret.Color });
+         }
+     }
+    ```
+
+1. play 。<p>
+![](images/colored_cannon_balls.png)
+
+## 第八步 安全区
+
+1. 在目录 "Scripts/Components" 中创建新的脚本文件 "Shooting.cs" ，填写如下内容：
+
+    ```c#
+    using Unity.Entities;
+
+    // This is a tag component that is also an "enableable component".
+    // Such components can be toggled on and off while remaining present on the entity.
+    // Doing so is a lot more efficient than adding and removing the component.
+    struct Shooting : IComponentData, IEnableableComponent
+    {
+    }
+    ```
+
+1. 修改 "Scripts/Authoring" 目录下的 "TurretAuthoring.cs" 文件：
+
+    ```diff
+     using Unity.Entities;
+     
+     class TurretAuthoring : UnityEngine.MonoBehaviour
+     {
+         public UnityEngine.GameObject CannonBallPrefab;
+         public UnityEngine.Transform CannonBallSpawn;
+     }
+     
+     class TurretBaker : Baker<TurretAuthoring>
+     {
+         public override void Bake(TurretAuthoring authoring)
+         {
+             AddComponent(new Turret
+             {
+                 CannonBallPrefab = GetEntity(authoring.CannonBallPrefab),
+                 CannonBallSpawn = GetEntity(authoring.CannonBallSpawn)
+             });
+     
+    +        // Enableable components are always initially enabled.
+    +        AddComponent<Shooting>();
+         }
+     }
+    ```
+
+1. 在目录 "Scripts/Systems" 中创建新的脚本文件 "SafeZoneSystem.cs" ，填写如下内容：
+
+    ```c#
+    using Unity.Burst;
+    using Unity.Collections;
+    using Unity.Entities;
+    using Unity.Mathematics;
+    using Unity.Transforms;
+
+    // Requires the Turret type without processing it (it's not part of the Execute method).
+    [WithAll(typeof(Turret))]
+    [BurstCompile]
+    partial struct SafeZoneJob : IJobEntity
+    {
+        // When running this job in parallel, the safety system will complain about a
+        // potential race condition with TurretActiveFromEntity because accessing the same entity
+        // from different threads would cause problems.
+        // But the code of this job is written in such a way that only the entity being currently
+        // processed will be looked up in TurretActiveFromEntity, making this process safe.
+        // So we can disable the parallel safety check.
+        [NativeDisableParallelForRestriction] public ComponentLookup<Shooting> TurretActiveFromEntity;
+
+        public float SquaredRadius;
+
+        void Execute(Entity entity, TransformAspect transform)
+        {
+            // The tag component Shooting will be enabled only if the tank is outside the given range.
+            TurretActiveFromEntity.SetComponentEnabled(entity, math.lengthsq(transform.Position) > SquaredRadius);
+        }
+    }
+
+    [BurstCompile]
+    partial struct SafeZoneSystem : ISystem
+    {
+        // The ComponentLookup random accessors should not be created on the spot.
+        // Just like EntityQuery, they should be created once and stored in a field.
+        ComponentLookup<Shooting> m_TurretActiveFromEntity;
+
+        [BurstCompile]
+        public void OnCreate(ref SystemState state)
+        {
+            state.RequireForUpdate<Config>();
+
+            m_TurretActiveFromEntity = state.GetComponentLookup<Shooting>();
+        }
+
+        [BurstCompile]
+        public void OnDestroy(ref SystemState state)
+        {
+        }
+
+        [BurstCompile]
+        public void OnUpdate(ref SystemState state)
+        {
+            float radius = SystemAPI.GetSingleton<Config>().SafeZoneRadius;
+            const float debugRenderStepInDegrees = 20;
+
+            // Debug rendering (the white circle).
+            for (float angle = 0; angle < 360; angle += debugRenderStepInDegrees)
+            {
+                var a = float3.zero;
+                var b = float3.zero;
+                math.sincos(math.radians(angle), out a.x, out a.z);
+                math.sincos(math.radians(angle + debugRenderStepInDegrees), out b.x, out b.z);
+                UnityEngine.Debug.DrawLine(a * radius, b * radius);
+            }
+
+            m_TurretActiveFromEntity.Update(ref state);
+            var safeZoneJob = new SafeZoneJob
+            {
+                TurretActiveFromEntity = m_TurretActiveFromEntity,
+                SquaredRadius = radius * radius
+            };
+            safeZoneJob.ScheduleParallel();
+        }
+    }
+    ```
+
+1. 修改 "Scripts/Systems" 目录下的 "TurretShootingSystem.cs" 文件：
+
+    ```diff
+    +// Requiring the Shooting tag component effectively prevents this job from running
+    +// for the tanks which are in the safe zone.
+    +[WithAll(typeof(Shooting))]
+     [BurstCompile]
+     partial struct TurretShoot : IJobEntity
+     {
+         [ReadOnly] public ComponentLookup<LocalToWorldTransform> LocalToWorldTransformFromEntity;
+         public EntityCommandBuffer ECB;
+     
+         void Execute(in TurretAspect turret)
+         {
+             var instance = ECB.Instantiate(turret.CannonBallPrefab);
+             var spawnLocalToWorld = LocalToWorldTransformFromEntity[turret.CannonBallSpawn];
+             var cannonBallTransform = UniformScaleTransform.FromPosition(spawnLocalToWorld.Value.Position);
+     
+             cannonBallTransform.Scale = LocalToWorldTransformFromEntity[turret.CannonBallPrefab].Value.Scale;
+             ECB.SetComponent(instance, new LocalToWorldTransform
+             {
+                 Value = cannonBallTransform
+             });
+             ECB.SetComponent(instance, new CannonBall
+             {
+                 Speed = spawnLocalToWorld.Value.Forward() * 20.0f
+             });
+     
+             // The line below propagates the color from the turret to the cannon ball.
+             ECB.SetComponent(instance, new URPMaterialPropertyBaseColor { Value = turret.Color });
+         }
+     }
+    ```
+
+1. play 。坦克只会在安全区外进行射击。如果没能看见安全区，请按下图操作。<p>
+![](images/safe_zone.gif)
+![](images/gizmos_enabled.png)
+
+1. 在 play 模式中，改变 "Config" 的 "Safe Zone Radius" 属性。你会发现改变会实时生效。
+
+
+## 第九步 相机跟随
+> ECS 和 GameObjects 在 runtime 的时候的相互影响。
+
+1. 在目录 "Scripts/MonoBehaviours" 中创建新的脚本文件 "CameraSingleton.cs" ，填写如下内容：
+
+    ```c#
+    // There are many ways of getting access to the main camera, but the approach using
+    // a singleton (as we use here) works for any kind of MonoBehaviour.
+    class CameraSingleton : UnityEngine.MonoBehaviour
+    {
+        public static UnityEngine.Camera Instance;
+
+        void Awake()
+        {
+            Instance = GetComponent<UnityEngine.Camera>();
+        }
+    }
+    ```
+
+1. 添加 "CameraSingleton" MonoBehaviour 到 "SampleScene" 的 "Main Camera" GameObject 。
+
+1. 在目录 "Scripts/Systems" 中创建新的脚本文件 "CameraSystem.cs" ，填写如下内容：
+
+    ```c#
+    using Unity.Collections;
+    using Unity.Entities;
+    using Unity.Mathematics;
+    using Unity.Transforms;
+
+    // This system should run after the transform system has been updated, otherwise the camera
+    // will lag one frame behind the tank and will jitter.
+    [UpdateInGroup(typeof(LateSimulationSystemGroup))]
+    partial class CameraSystem : SystemBase
+    {
+        Entity Target;
+        Random Random;
+        EntityQuery TanksQuery;
+
+        protected override void OnCreate()
+        {
+            Random = Random.CreateFromIndex(1234);
+            TanksQuery = GetEntityQuery(typeof(Tank));
+            RequireForUpdate(TanksQuery);
+        }
+
+        protected override void OnUpdate()
+        {
+            if (Target == Entity.Null || UnityEngine.Input.GetKeyDown(UnityEngine.KeyCode.Space))
+            {
+                var tanks = TanksQuery.ToEntityArray(Allocator.Temp);
+                Target = tanks[Random.NextInt(tanks.Length)];
+            }
+
+            var cameraTransform = CameraSingleton.Instance.transform;
+            var tankTransform = GetComponent<LocalToWorld>(Target);
+            cameraTransform.position = tankTransform.Position - 10.0f * tankTransform.Forward + new float3(0.0f, 5.0f, 0.0f);
+            cameraTransform.LookAt(tankTransform.Position, new float3(0.0f, 1.0f, 0.0f));
+        }
+    }
+    ```
+
+1. play 。会发现摄像机会跟随一个坦克。按下空格键会换一个坦克跟随。<p>
+![](images/expected_result.gif)
+
+## 结束
+
+计划后续添加基于 ECS 的优化。
