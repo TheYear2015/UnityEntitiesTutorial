@@ -67,3 +67,140 @@
 
 8. 需要删除节点对象中的碰撞体。<p>
 ![](images/remove_component.png)
+
+## 炮台 Turret 旋转
+
+
+> Introducing the concepts of unmanaged systems (`ISystem`), queries, idiomatic `foreach`.
+
+1. 在目录 "Scripts/Systems" 创建一个脚本文件 "TurretRotationSystem.cs"，文件内容如下：
+
+    ```c#
+    using Unity.Burst;
+    using Unity.Entities;
+    using Unity.Mathematics;
+    using Unity.Transforms;
+
+    // Unmanaged systems based on ISystem can be Burst compiled, but this is not yet the default.
+    // So we have to explicitly opt into Burst compilation with the [BurstCompile] attribute.
+    // It has to be added on BOTH the struct AND the OnCreate/OnDestroy/OnUpdate functions to be
+    // effective.
+    [BurstCompile]
+    partial struct TurretRotationSystem : ISystem
+    {
+        // Every function defined by ISystem has to be implemented even if empty.
+        [BurstCompile]
+        public void OnCreate(ref SystemState state)
+        {
+        }
+
+        // Every function defined by ISystem has to be implemented even if empty.
+        [BurstCompile]
+        public void OnDestroy(ref SystemState state)
+        {
+        }
+
+        // See note above regarding the [BurstCompile] attribute.
+        [BurstCompile]
+        public void OnUpdate(ref SystemState state)
+        {
+            // The amount of rotation around Y required to do 360 degrees in 2 seconds.
+            var rotation = quaternion.RotateY(SystemAPI.Time.DeltaTime * math.PI);
+
+            // The classic C# foreach is what we often refer to as "Idiomatic foreach" (IFE).
+            // Aspects provide a higher level interface than directly accessing component data.
+            // Using IFE with aspects is a powerful and expressive way of writing main thread code.
+            foreach (var transform in SystemAPI.Query<TransformAspect>())
+            {
+                transform.RotateWorld(rotation);
+            }
+        }
+    }
+    ```
+
+1. 进行 play 会看到如下图的效果。<p>
+![](images/tank_spin_wrong.gif)
+
+    | &#x1F4DD; NOTE |
+    | :- |
+    | 出现这种情况是因为 `foreach` 中我们旋转了所有的 transform 。我们希望只旋转炮台 Turret 。|
+
+1. 在 "Scripts/Components" 文件夹中创建一个新的脚本文件 "Turret.cs" ，文件内容如下：
+
+    ```c#
+    using Unity.Entities;
+
+    // An empty component is called a "tag component".
+    struct Turret : IComponentData
+    {
+    }
+    ```
+
+1. 在 "Scripts/Authoring" 文件夹中创建一个新的脚本文件 "TurretAuthoring.cs" ，文件内容如下：
+
+    ```c#
+    using Unity.Entities;
+
+    // Authoring MonoBehaviours are regular GameObject components.
+    // They constitute the inputs for the baking systems which generates ECS data.
+    class TurretAuthoring : UnityEngine.MonoBehaviour
+    {
+    }
+
+    // Bakers convert authoring MonoBehaviours into entities and components.
+    class TurretBaker : Baker<TurretAuthoring>
+    {
+        public override void Bake(TurretAuthoring authoring)
+        {
+            AddComponent<Turret>();
+        }
+    }
+    ```
+
+1. 添加 "TurretAuthoring" component 到 "Turret" GameObject 。
+
+1. 当选择 "Turret" GameObject 时， 展开 "Entity Conversion" panel ，我们能看见 "Turret" component 的标识。<p>
+![](images/turret_tag.png)
+
+1. 按以下的内容修改 "Scripts/Systems" 文件中的文件 "TurretRotationSystem.cs" :
+
+    ```diff
+     using Unity.Burst;
+     using Unity.Entities;
+     using Unity.Mathematics;
+     using Unity.Transforms;
+     
+     [BurstCompile]
+     partial struct TurretRotationSystem : ISystem
+     {
+         [BurstCompile]
+         public void OnCreate(ref SystemState state)
+         {
+         }
+     
+         [BurstCompile]
+         public void OnDestroy(ref SystemState state)
+         {
+         }
+     
+         [BurstCompile]
+         public void OnUpdate(ref SystemState state)
+         {
+             var rotation = quaternion.RotateY(SystemAPI.Time.DeltaTime * math.PI);
+     
+    +        // WithAll adds a constraint to the query, specifying that every entity should have such component.
+    +        foreach (var transform in SystemAPI.Query<TransformAspect>().WithAll<Turret>())
+    -        // The classic C# foreach is what we often refer to as "Idiomatic foreach" (IFE).
+    -        // Aspects provide a higher level interface than directly accessing component data.
+    -        // Using IFE with aspects is a powerful and expressive way of writing main thread code.
+    -        foreach (var transform in SystemAPI.Query<TransformAspect>())
+             {
+                 transform.RotateWorld(rotation);
+             }
+         }
+     }
+    ```
+
+1. 我们再进行 play 会看到如下图的效果。<p>
+![](images/tank_spin_correct.gif)
+
