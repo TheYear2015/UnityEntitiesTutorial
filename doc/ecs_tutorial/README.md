@@ -68,8 +68,7 @@
 8. 需要删除节点对象中的碰撞体。<p>
 ![](images/remove_component.png)
 
-## 炮台 Turret 旋转
-
+## 第二步 炮台 Turret 旋转
 
 > Introducing the concepts of unmanaged systems (`ISystem`), queries, idiomatic `foreach`.
 
@@ -205,7 +204,7 @@
 ![](images/tank_spin_correct.gif)
 
 
-## 第三步 - 坦克移动
+## 第三步 坦克移动
 > 我们学习 `SystemBase` 和 `Entities.ForEach` 的并行使用。
 
 1. 在目录 "Scripts/Components" 中创建新的脚本文件 "Tank.cs" ，填写如下内容：
@@ -293,3 +292,316 @@
 1. 这时进行 play 会看到如下图的效果。<p>
 ![](images/tank_movement.gif)
 
+## 第四步 炮弹
+> 学习创建一个 prefab ，并从 entities 引用别的 entities 。
+
+1. 在目录 "Scripts/Components" 中创建新的脚本文件 "CannonBall.cs" ，填写如下内容：
+
+    ```c#
+    using Unity.Entities;
+    using Unity.Mathematics;
+
+    // Same approach for the cannon ball, we are creating a component to identify the entities.
+    // But this time it's not a tag component (empty) because it contains data: the Speed field.
+    // It won't be used immediately, but will become relevant when we implement motion.
+    struct CannonBall : IComponentData
+    {
+        public float3 Speed;
+    }
+    ```
+
+1. 在目录 "Scripts/Authoring" 中创建新的脚本文件 "CannonBallAuthoring.cs" ，填写如下内容：
+
+    ```c#
+    using Unity.Entities;
+    using Unity.Rendering;
+
+    class CannonBallAuthoring : UnityEngine.MonoBehaviour
+    {
+    }
+
+    class CannonBallBaker : Baker<CannonBallAuthoring>
+    {
+        public override void Bake(CannonBallAuthoring authoring)
+        {
+            // By default, components are zero-initialized.
+            // So in this case, the Speed field in CannonBall will be float3.zero.
+            AddComponent<CannonBall>();
+        }
+    }
+    ```
+
+1. 右键点击 Hierarchy 窗口中的 "SampleScene" ，创建一个 `GameObject > 3D Object > Sphere` 命名为 "CannonBall" 。设置它的 Position 为 (0,0,0) ，Rotation 为 (0,0,0) ，**Scale** 为 (0.2,0.2,0.2) 。
+
+1. 添加 "CannonBallAuthoring" component 到 "CannonBall" GameObject 。
+
+1. 删除 "CannonBall" GameObject 的 "Sphere Collider" component 。
+
+1. 拖拽 "CannonBall" GameObject 节点到 Project 窗口中的 "Prefabs" 目录，形成一个 prefab 文件。
+
+1. 删除  Hierarchy 窗口中 "SampleScene" 下的 "CannonBall" GameObject 。<p>
+![](images/cannon_ball_prefab.png)
+
+1. 修改 "Scripts/Components" 目录下的 "Turret.cs" 文件：
+
+    ```diff
+     using Unity.Entities;
+     
+     struct Turret : IComponentData
+     {
+    +    // This entity will reference the nozzle of the cannon, where cannon balls should be spawned.
+    +    public Entity CannonBallSpawn;
+     
+    +    // This entity will reference the prefab to be spawned every time the cannon shoots.
+    +    public Entity CannonBallPrefab;
+     }
+    ```
+
+1. 修改 "Scripts/Authoring" 目录下的 "TurretAuthoring.cs" 文件：
+
+    ```diff
+     using Unity.Entities;
+     
+     class TurretAuthoring : UnityEngine.MonoBehaviour
+     {
+    +    public UnityEngine.GameObject CannonBallPrefab;
+    +    public UnityEngine.Transform CannonBallSpawn;
+     }
+     
+     class TurretBaker : Baker<TurretAuthoring>
+     {
+         public override void Bake(TurretAuthoring authoring)
+         {
+    -        AddComponent<Turret>();
+    +        AddComponent(new Turret
+    +        {
+    +            // By default, each authoring GameObject turns into an Entity.
+    +            // Given a GameObject (or authoring component), GetEntity looks up the resulting Entity.
+    +            CannonBallPrefab = GetEntity(authoring.CannonBallPrefab),
+    +            CannonBallSpawn = GetEntity(authoring.CannonBallSpawn)
+    +        });
+         }
+     }
+    ```
+
+1. 选择 "Turret" GameObject ，设置 "Turret Authoring" component 新的属性 "CannonBallPrefab" 和 "CannonBallSpawn" ， "CannonBallPrefab" 使用 "CannonBall" prefab ， "CannonBallSpawn" 选择 Hierarchy 窗口中的 "SpawnPoint" GameObject 。<p>
+![](images/turret_authoring.png)
+
+1. 在目录 "Scripts/Aspects" 中创建新的脚本文件 "TurretAspect.cs" ，填写如下内容：
+
+    ```c#
+    using Unity.Entities;
+    using Unity.Mathematics;
+    using Unity.Rendering;
+
+    // Instead of directly accessing the Turret component, we are creating an aspect.
+    // Aspects allows you to provide a customized API for accessing your components.
+    readonly partial struct TurretAspect : IAspect
+    {
+        // This reference provides read only access to the Turret component.
+        // Trying to use ValueRW (instead of ValueRO) on a read-only reference is an error.
+        readonly RefRO<Turret> m_Turret;
+
+        // Note the use of ValueRO in the following properties.
+        public Entity CannonBallSpawn => m_Turret.ValueRO.CannonBallSpawn;
+        public Entity CannonBallPrefab => m_Turret.ValueRO.CannonBallPrefab;
+    }
+    ```
+
+1. 在目录 "Scripts/Systems" 中创建新的脚本文件 "TurretShootingSystem.cs" ，填写如下内容：
+
+    ```c#
+    using Unity.Burst;
+    using Unity.Collections;
+    using Unity.Entities;
+    using Unity.Rendering;
+    using Unity.Transforms;
+
+    [BurstCompile]
+    partial struct TurretShootingSystem : ISystem
+    {
+        // A ComponentLookup provides random access to a component (looking up an entity).
+        // We'll use it to extract the world space position and orientation of the spawn point (cannon nozzle).
+        ComponentLookup<LocalToWorldTransform> m_LocalToWorldTransformFromEntity;
+
+        [BurstCompile]
+        public void OnCreate(ref SystemState state)
+        {
+            // ComponentLookup structures have to be initialized once.
+            // The parameter specifies if the lookups will be read only or if they should allow writes.
+            m_LocalToWorldTransformFromEntity = state.GetComponentLookup<LocalToWorldTransform>(true);
+        }
+
+        [BurstCompile]
+        public void OnDestroy(ref SystemState state)
+        {
+        }
+
+        [BurstCompile]
+        public void OnUpdate(ref SystemState state)
+        {
+            // ComponentLookup structures have to be updated every frame.
+            m_LocalToWorldTransformFromEntity.Update(ref state);
+
+            // Creating an EntityCommandBuffer to defer the structural changes required by instantiation.
+            var ecbSingleton = SystemAPI.GetSingleton<BeginSimulationEntityCommandBufferSystem.Singleton>();
+            var ecb = ecbSingleton.CreateCommandBuffer(state.WorldUnmanaged);
+
+            // Creating an instance of the job.
+            // Passing it the ComponentLookup required to get the world transform of the spawn point.
+            // And the entity command buffer the job can write to.
+            var turretShootJob = new TurretShoot
+            {
+                LocalToWorldTransformFromEntity = m_LocalToWorldTransformFromEntity,
+                ECB = ecb
+            };
+
+            // Schedule execution in a single thread, and do not block main thread.
+            turretShootJob.Schedule();
+        }
+    }
+
+    [BurstCompile]
+    partial struct TurretShoot : IJobEntity
+    {
+        [ReadOnly] public ComponentLookup<LocalToWorldTransform> LocalToWorldTransformFromEntity;
+        public EntityCommandBuffer ECB;
+
+        // Note that the TurretAspects parameter is "in", which declares it as read only.
+        // Making it "ref" (read-write) would not make a difference in this case, but you
+        // will encounter situations where potential race conditions trigger the safety system.
+        // So in general, using "in" everywhere possible is a good principle.
+        void Execute(in TurretAspect turret)
+        {
+            var instance = ECB.Instantiate(turret.CannonBallPrefab);
+            var spawnLocalToWorld = LocalToWorldTransformFromEntity[turret.CannonBallSpawn];
+            var cannonBallTransform = UniformScaleTransform.FromPosition(spawnLocalToWorld.Value.Position);
+
+            // We are about to overwrite the transform of the new instance. If we didn't explicitly
+            // copy the scale it would get reset to 1 and we'd have oversized cannon balls.
+            cannonBallTransform.Scale = LocalToWorldTransformFromEntity[turret.CannonBallPrefab].Value.Scale;
+            ECB.SetComponent(instance, new LocalToWorldTransform
+            {
+                Value = cannonBallTransform
+            });
+            ECB.SetComponent(instance, new CannonBall
+            {
+                Speed = spawnLocalToWorld.Value.Forward() * 20.0f
+            });
+        }
+    }
+    ```
+
+1. play 。<p>
+![](images/cannon_ball_trail.gif)
+
+## 第五步 炮弹移动
+> 学习并行 jobs.
+
+1. 在目录 "Scripts/Aspects" 中创建新的脚本文件 "CannonBallAspect.cs" ，填写如下内容：
+
+    ```c#
+    using Unity.Entities;
+    using Unity.Mathematics;
+    using Unity.Transforms;
+
+    readonly partial struct CannonBallAspect : IAspect
+    {
+        // An Entity field in an aspect provides access to the entity itself.
+        // This is required for registering commands in an EntityCommandBuffer for example.
+        public readonly Entity Self;
+
+        // Aspects can contain other aspects.
+        readonly TransformAspect Transform;
+
+        // A RefRW field provides read write access to a component. If the aspect is taken as an "in"
+        // parameter, the field will behave as if it was a RefRO and will throw exceptions on write attempts.
+        readonly RefRW<CannonBall> CannonBall;
+
+        // Properties like this are not mandatory, the Transform field could just have been made public instead.
+        // But they improve readability by avoiding chains of "aspect.aspect.aspect.component.value.value".
+        public float3 Position
+        {
+            get => Transform.Position;
+            set => Transform.Position = value;
+        }
+
+        public float3 Speed
+        {
+            get => CannonBall.ValueRO.Speed;
+            set => CannonBall.ValueRW.Speed = value;
+        }
+    }
+    ```
+1. 在目录 "Scripts/Systems" 中创建新的脚本文件 "CannonBallSystem.cs" ，填写如下内容：
+
+    ```c#
+    using Unity.Burst;
+    using Unity.Entities;
+    using Unity.Mathematics;
+
+    [BurstCompile]
+    // IJobEntity relies on source generation to implicitly define a query from the signature of the Execute function.
+    partial struct CannonBallJob : IJobEntity
+    {
+        // A regular EntityCommandBuffer cannot be used in parallel, a ParallelWriter has to be explicitly used.
+        public EntityCommandBuffer.ParallelWriter ECB;
+        // Time cannot be directly accessed from a job, so DeltaTime has to be passed in as a parameter.
+        public float DeltaTime;
+
+        // The ChunkIndexInQuery attributes maps the chunk index to an int parameter.
+        // Each chunk can only be processed by a single thread, so those indices are unique to each thread.
+        // They are also fully deterministic, regardless of the amounts of parallel processing happening.
+        // So those indices are used as a sorting key when recording commands in the EntityCommandBuffer,
+        // this way we ensure that the playback of commands is always deterministic.
+        void Execute([ChunkIndexInQuery] int chunkIndex, ref CannonBallAspect cannonBall)
+        {
+            var gravity = new float3(0.0f, -9.82f, 0.0f);
+            var invertY = new float3(1.0f, -1.0f, 1.0f);
+
+            cannonBall.Position += cannonBall.Speed * DeltaTime;
+            if (cannonBall.Position.y < 0.0f)
+            {
+                cannonBall.Position *= invertY;
+                cannonBall.Speed *= invertY * 0.8f;
+            }
+
+            cannonBall.Speed += gravity * DeltaTime;
+
+            var speed = math.lengthsq(cannonBall.Speed);
+            if (speed < 0.1f) ECB.DestroyEntity(chunkIndex, cannonBall.Self);
+        }
+    }
+
+    [BurstCompile]
+    partial struct CannonBallSystem : ISystem
+    {
+        [BurstCompile]
+        public void OnCreate(ref SystemState state)
+        {
+        }
+
+        [BurstCompile]
+        public void OnDestroy(ref SystemState state)
+        {
+        }
+
+        [BurstCompile]
+        public void OnUpdate(ref SystemState state)
+        {
+            var ecbSingleton = SystemAPI.GetSingleton<EndSimulationEntityCommandBufferSystem.Singleton>();
+            var ecb = ecbSingleton.CreateCommandBuffer(state.WorldUnmanaged);
+            var cannonBallJob = new CannonBallJob
+            {
+                // Note the function call required to get a parallel writer for an EntityCommandBuffer.
+                ECB = ecb.AsParallelWriter(),
+                // Time cannot be directly accessed from a job, so DeltaTime has to be passed in as a parameter.
+                DeltaTime = SystemAPI.Time.DeltaTime
+            };
+            cannonBallJob.ScheduleParallel();
+        }
+    }
+    ```
+
+1. play 。<p>
+![](images/turret_shoot.gif)

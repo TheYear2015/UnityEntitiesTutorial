@@ -220,6 +220,9 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: 18fbec217c52b9144a784c64607c774d, type: 3}
   m_Name: 
   m_EditorClassIdentifier: 
+  CannonBallPrefab: {fileID: 4504356868621120084, guid: 7bd79dd861bdd7a418873b94ab7ba8da,
+    type: 3}
+  CannonBallSpawn: {fileID: 1685148205}
 --- !u!1 &922958572
 GameObject:
   m_ObjectHideFlags: 0
