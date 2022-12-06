@@ -204,3 +204,92 @@
 1. 我们再进行 play 会看到如下图的效果。<p>
 ![](images/tank_spin_correct.gif)
 
+
+## 第三步 - 坦克移动
+> 我们学习 `SystemBase` 和 `Entities.ForEach` 的并行使用。
+
+1. 在目录 "Scripts/Components" 中创建新的脚本文件 "Tank.cs" ，填写如下内容：
+
+    ```c#
+    using Unity.Entities;
+
+    // Just like we did with the turret, we create a tag component to identify the tank (cube).
+    struct Tank : IComponentData
+    {
+    }
+    ```
+
+1. 在目录 "Scripts/Authoring" 中创建新的脚本文件 "TankAuthoring.cs" ，填写如下内容：
+
+    ```c#
+    using Unity.Entities;
+
+    class TankAuthoring : UnityEngine.MonoBehaviour
+    {
+    }
+
+    class TankBaker : Baker<TankAuthoring>
+    {
+        public override void Bake(TankAuthoring authoring)
+        {
+            AddComponent<Tank>();
+        }
+    }
+    ```
+
+1. 添加 "TankAuthoring" component 到 "Tank" GameObject 。
+
+1. 在目录 "Scripts/Systems" 中创建新的脚本文件 "TankMovementSystem.cs" ，填写如下内容：
+
+    ```c#
+    using Unity.Entities;
+    using Unity.Mathematics;
+    using Unity.Transforms;
+
+    // Contrarily to ISystem, SystemBase systems are classes.
+    // They are not Burst compiled, and can use managed code.
+    partial class TankMovementSystem : SystemBase
+    {
+        protected override void OnUpdate()
+        {
+            // The Entities.ForEach below is Burst compiled (implicitly).
+            // And time is a member of SystemBase, which is a managed type (class).
+            // This means that it wouldn't be possible to directly access Time from there.
+            // So we need to copy the value we need (DeltaTime) into a local variable.
+            var dt = SystemAPI.Time.DeltaTime;
+
+            // Entities.ForEach is an older approach to processing queries. Its use is not
+            // encouraged, but it remains convenient until we get feature parity with IFE.
+            Entities
+                .WithAll<Tank>()
+                .ForEach((TransformAspect transform) =>
+                {
+                    // Notice that this is a lambda being passed as parameter to ForEach.
+                    var pos = transform.Position;
+
+                    // Unity.Mathematics.noise provides several types of noise functions.
+                    // Here we use the Classic Perlin Noise (cnoise).
+                    // The approach taken to generate a flow field from Perlin noise is detailed here:
+                    // https://www.bit-101.com/blog/2021/07/mapping-perlin-noise-to-angles/
+                    var angle = (0.5f + noise.cnoise(pos / 10f)) * 4.0f * math.PI;
+
+                    var dir = float3.zero;
+                    math.sincos(angle, out dir.x, out dir.z);
+                    transform.Position += dir * dt * 5.0f;
+                    transform.Rotation = quaternion.RotateY(angle);
+
+                    // The last function call in the Entities.ForEach sequence controls how the code
+                    // should be executed: Run (main thread), Schedule (single thread, async), or
+                    // ScheduleParallel (multiple threads, async).
+                    // Entities.ForEach is fundamentally a job generator, and it makes it very easy to
+                    // create parallel jobs. This unfortunately comes with a complexity cost and weird
+                    // arbitrary constraints, which is why more explicit approaches are preferred.
+                    // Those explicit approaches (IJobEntity) are covered later in this tutorial.
+                }).ScheduleParallel();
+        }
+    }
+    ```
+
+1. 这时进行 play 会看到如下图的效果。<p>
+![](images/tank_movement.gif)
+
