@@ -18,7 +18,7 @@ partial class TankMovementSystem : SystemBase
         // encouraged, but it remains convenient until we get feature parity with IFE.
         Entities
             .WithAll<Tank>()
-            .ForEach((Entity entity, TransformAspect transform) =>
+            .ForEach((Entity entity, ref LocalTransform transform) =>
             {
                 // Notice that this is a lambda being passed as parameter to ForEach.
                 var pos = transform.Position;

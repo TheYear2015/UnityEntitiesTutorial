@@ -19,7 +19,7 @@ partial struct SafeZoneJob : IJobEntity
 
     public float SquaredRadius;
 
-    void Execute(Entity entity, TransformAspect transform)
+    void Execute(Entity entity, ref LocalToWorld transform)
     {
         // The tag component Shooting will be enabled only if the tank is outside the given range.
         TurretActiveFromEntity.SetComponentEnabled(entity, math.lengthsq(transform.Position) > SquaredRadius);

@@ -19,8 +19,8 @@ readonly partial struct CannonBallAspect : IAspect
     // But they improve readability by avoiding chains of "aspect.aspect.aspect.component.value.value".
     public float3 Position
     {
-        get => Transform.Position;
-        set => Transform.Position = value;
+        get => Transform.LocalPosition;
+        set => Transform.LocalPosition = value;
     }
 
     public float3 Speed

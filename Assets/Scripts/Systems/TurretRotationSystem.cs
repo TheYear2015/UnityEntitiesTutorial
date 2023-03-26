@@ -33,9 +33,9 @@ partial struct TurretRotationSystem : ISystem
         // Aspects provide a higher level interface than directly accessing component data.
         // Using IFE with aspects is a powerful and expressive way of writing main thread code.
         // WithAll adds a constraint to the query, specifying that every entity should have such component.
-        foreach (var transform in SystemAPI.Query<TransformAspect>().WithAll<Turret>())
+        foreach (var transform in SystemAPI.Query<LocalTransform>().WithAll<Turret>())
         {
-            transform.RotateWorld(rotation);
+            transform.Rotate(rotation);
         }
     }
 }
