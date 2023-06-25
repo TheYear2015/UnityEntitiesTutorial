@@ -1,35 +1,44 @@
+using Unity.Burst;
 using Unity.Collections;
 using Unity.Entities;
-using Unity.Mathematics;
 using Unity.Transforms;
+using UnityEngine;
+using Random = Unity.Mathematics.Random;
 
 // This system should run after the transform system has been updated, otherwise the camera
-// will lag one frame behind the tank and will jitter.
+// will lag one frame behind the tank.
 [UpdateInGroup(typeof(LateSimulationSystemGroup))]
-partial class CameraSystem : SystemBase
+public partial struct CameraSystem : ISystem
 {
-    Entity Target;
-    Random Random;
-    EntityQuery TanksQuery;
+    Entity target;
+    Random random;
 
-    protected override void OnCreate()
+    [BurstCompile]
+    public void OnCreate(ref SystemState state)
     {
-        Random = Random.CreateFromIndex(1234);
-        TanksQuery = GetEntityQuery(typeof(Tank));
-        RequireForUpdate(TanksQuery);
+        random = new Random(123);
     }
 
-    protected override void OnUpdate()
+    // Because this OnUpdate accesses managed objects, it cannot be Burst-compiled.
+    public void OnUpdate(ref SystemState state)
     {
-        if (Target == Entity.Null || UnityEngine.Input.GetKeyDown(UnityEngine.KeyCode.Space))
+        if (target == Entity.Null || Input.GetKeyDown(KeyCode.Space))
         {
-            var tanks = TanksQuery.ToEntityArray(Allocator.Temp);
-            Target = tanks[Random.NextInt(tanks.Length)];
+            var tankQuery = SystemAPI.QueryBuilder().WithAll<Tank>().Build();
+            var tanks = tankQuery.ToEntityArray(Allocator.Temp);
+            if (tanks.Length == 0)
+            {
+                return;
+            }
+
+            target = tanks[random.NextInt(tanks.Length)];
         }
 
         var cameraTransform = CameraSingleton.Instance.transform;
-        var tankTransform = GetComponent<LocalToWorld>(Target);
-        cameraTransform.position = tankTransform.Position - 10.0f * tankTransform.Forward + new float3(0.0f, 5.0f, 0.0f);
-        cameraTransform.LookAt(tankTransform.Position, new float3(0.0f, 1.0f, 0.0f));
+        var tankTransform = SystemAPI.GetComponent<LocalToWorld>(target);
+        cameraTransform.position = tankTransform.Position;
+        cameraTransform.position -= 10.0f * (Vector3)tankTransform.Forward;  // move the camera back from the tank
+        cameraTransform.position += new Vector3(0, 5f, 0);  // raise the camera by an offset
+        cameraTransform.LookAt(tankTransform.Position);
     }
 }

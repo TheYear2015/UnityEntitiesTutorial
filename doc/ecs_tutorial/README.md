@@ -2,7 +2,7 @@
 
 >原文
 >
->https://github.com/Unity-Technologies/EntityComponentSystemSamples/blob/master/EntitiesSamples/EntitiesTutorial/README.md
+>https://github.com/Unity-Technologies/EntityComponentSystemSamples/EntitiesSamples/Assets/Tutorials/Tanks/README.md
 
 ## 概述
 
@@ -10,9 +10,9 @@
 
 ## Unity 版本
 
-教程使用的是 **2022.2.11f1c1**。
+教程使用的是 **2022.3.0f1c1**。
 
-com.unity.entities.grpaphics **1.0.0-pre.15**
+com.unity.entities.grpaphics **1.0.11**
 
 
 
@@ -35,7 +35,6 @@ com.unity.entities.grpaphics **1.0.0-pre.15**
     * Scenes (already created)
     * Scripts/Aspects
     * Scripts/Authoring
-    * Scripts/Authoring/Components
     * Scripts/MonoBehaviours
     * Scripts/Systems
     * Settings (already created)
@@ -84,38 +83,37 @@ com.unity.entities.grpaphics **1.0.0-pre.15**
     using Unity.Mathematics;
     using Unity.Transforms;
 
-    // Unmanaged systems based on ISystem can be Burst compiled, but this is not yet the default.
-    // So we have to explicitly opt into Burst compilation with the [BurstCompile] attribute.
+    // Unmanaged systems based on ISystem can be Burst compiled, but this is not yet the default,
+    // so we have to explicitly opt into Burst compilation with the [BurstCompile] attribute.
     // It has to be added on BOTH the struct AND the OnCreate/OnDestroy/OnUpdate functions to be
     // effective.
-    [BurstCompile]
-    partial struct TurretRotationSystem : ISystem
+    public partial struct TurretRotationSystem : ISystem
     {
-        // Every function defined by ISystem has to be implemented even if empty.
         [BurstCompile]
         public void OnCreate(ref SystemState state)
         {
         }
 
-        // Every function defined by ISystem has to be implemented even if empty.
-        [BurstCompile]
-        public void OnDestroy(ref SystemState state)
-        {
-        }
+        // This system doesn't need an OnDestroy method, so it uses the default empty one defined in ISystem.
 
         // See note above regarding the [BurstCompile] attribute.
         [BurstCompile]
         public void OnUpdate(ref SystemState state)
         {
-            // The amount of rotation around Y required to do 360 degrees in 2 seconds.
-            var rotation = quaternion.RotateY(SystemAPI.Time.DeltaTime * math.PI);
+            // Rotate 180 degrees around Y every second.
+            var spin = quaternion.RotateY(SystemAPI.Time.DeltaTime * math.PI);
 
-            // The classic C# foreach is what we often refer to as "Idiomatic foreach" (IFE).
-            // Aspects provide a higher level interface than directly accessing component data.
-            // Using IFE with aspects is a powerful and expressive way of writing main thread code.
-            foreach (var transform in SystemAPI.Query<TransformAspect>())
+            // The SystemAPI.Query method can be called only as the 'in' clause of a foreach loop.
+            // For these loops, source generation creates a query, and the loop iterates over each entity of the query.
+            // In the example below, the query matches all entities with LocalTransform and Turret components.
+
+            // We want to modify the LocalTransform component values, so we put RefRW<LocalTransform> in the Query call.
+            foreach (var transform in
+                    SystemAPI.Query<RefRW<LocalTransform>>())
             {
-                transform.RotateWorld(rotation);
+                // ValueRW returns a ref to the actual component value.
+                // Add a rotation around the parent's Y axis.
+                transform.ValueRW.Rotation = math.mul(spin, transform.ValueRO.Rotation);
             }
         }
     }
@@ -132,25 +130,23 @@ com.unity.entities.grpaphics **1.0.0-pre.15**
 
     ```c#
     using Unity.Entities;
+    using UnityEngine;
 
-    // Authoring MonoBehaviours are regular GameObject components.
-    // They constitute the inputs for the baking systems which generates ECS data.
-    class TurretAuthoring : UnityEngine.MonoBehaviour
+    class TurretAuthoring : MonoBehaviour
     {
         // Bakers convert authoring MonoBehaviours into entities and components.
-        // (Nesting a baker in its associated Authoring component is not necessary but is a common convention.)
-        class TurretBaker : Baker<TurretAuthoring>
+        class Baker : Baker<TurretAuthoring>
         {
             public override void Bake(TurretAuthoring authoring)
             {
-                AddComponent<Turret>();
+                // GetEntity returns the baked Entity form of a GameObject.
+                var entity = GetEntity(TransformUsageFlags.Dynamic);
+                AddComponent<Turret>(entity);
             }
         }
     }
 
-    // An ECS component.
-    // An empty component is called a "tag component".
-    struct Turret : IComponentData
+    public struct Turret : IComponentData
     {
     }
     ```
@@ -163,37 +159,52 @@ com.unity.entities.grpaphics **1.0.0-pre.15**
 1. 按以下的内容修改 "Scripts/Systems" 文件中的文件 "TurretRotationSystem.cs" :
 
     ```diff
-     using Unity.Burst;
-     using Unity.Entities;
-     using Unity.Mathematics;
-     using Unity.Transforms;
-     
-     [BurstCompile]
-     partial struct TurretRotationSystem : ISystem
-     {
-         [BurstCompile]
-         public void OnCreate(ref SystemState state)
-         {
-         }
-     
-         [BurstCompile]
-         public void OnDestroy(ref SystemState state)
-         {
-         }
-     
-         [BurstCompile]
-         public void OnUpdate(ref SystemState state)
-         {
-             var rotation = quaternion.RotateY(SystemAPI.Time.DeltaTime * math.PI);
-     
-    +        // WithAll adds a constraint to the query, specifying that every entity should have such component.
-    +        foreach (var transform in SystemAPI.Query<TransformAspect>().WithAll<Turret>())
-    -        foreach (var transform in SystemAPI.Query<TransformAspect>())
-             {
-                 transform.RotateWorld(rotation);
-             }
-         }
-     }
+    using Unity.Burst;
+    using Unity.Entities;
+    using Unity.Mathematics;
+    using Unity.Transforms;
+
+    // Unmanaged systems based on ISystem can be Burst compiled, but this is not yet the default,
+    // so we have to explicitly opt into Burst compilation with the [BurstCompile] attribute.
+    // It has to be added on BOTH the struct AND the OnCreate/OnDestroy/OnUpdate functions to be
+    // effective.
+    public partial struct TurretRotationSystem : ISystem
+    {
+        [BurstCompile]
+        public void OnCreate(ref SystemState state)
+        {
+        }
+
+        // This system doesn't need an OnDestroy method, so it uses the default empty one defined in ISystem.
+
+        // See note above regarding the [BurstCompile] attribute.
+        [BurstCompile]
+        public void OnUpdate(ref SystemState state)
+        {
+            // Rotate 180 degrees around Y every second.
+            var spin = quaternion.RotateY(SystemAPI.Time.DeltaTime * math.PI);
+
+            // The SystemAPI.Query method can be called only as the 'in' clause of a foreach loop.
+            // For these loops, source generation creates a query, and the loop iterates over each entity of the query.
+            // In the example below, the query matches all entities with LocalTransform and Turret components.
+
+            // We want to modify the LocalTransform component values, so we put RefRW<LocalTransform> in the Query call.
+    -       foreach (var transform in
+    -           SystemAPI.Query<RefRW<LocalTransform>>())
+    +       // Because we want to include Turret in the query but don't need to read or write
+    +       // the Turret component values, we call WithAll<Turret>().
+    +       // Without this WithAll() call, the query would match *all* entities having transform components,
+    +       // and this foreach would rotate more than just the turrets.
+    +       foreach (var transform in
+    +           SystemAPI.Query<RefRW<LocalTransform>>()
+    +           .WithAll<Turret>())
+            {
+                // ValueRW returns a ref to the actual component value.
+                // Add a rotation around the parent's Y axis.
+                transform.ValueRW.Rotation = math.mul(spin, transform.ValueRO.Rotation);
+            }
+        }
+    }
     ```
 
 1. 我们再进行 play 会看到如下图的效果。<p>
@@ -207,17 +218,19 @@ com.unity.entities.grpaphics **1.0.0-pre.15**
 
     ```c#
     using Unity.Entities;
+    using UnityEngine;
 
-    class TankAuthoring : UnityEngine.MonoBehaviour
+    class TankAuthoring : MonoBehaviour
     {
         class TankBaker : Baker<TankAuthoring>
         {
             public override void Bake(TankAuthoring authoring)
             {
-                AddComponent<Tank>();
+                var entity = GetEntity(TransformUsageFlags.Dynamic);
+                AddComponent<Tank>(entity);
             }
         }
-    }   
+    }
 
     // Just like we did with the turret, we create a tag component to identify the tank (cube).
     struct Tank : IComponentData
@@ -230,52 +243,45 @@ com.unity.entities.grpaphics **1.0.0-pre.15**
 1. 在目录 "Scripts/Systems" 中创建新的脚本文件 "TankMovementSystem.cs" ，填写如下内容：
 
     ```c#
+    using Unity.Burst;
     using Unity.Entities;
     using Unity.Mathematics;
     using Unity.Transforms;
 
-    // Contrarily to ISystem, SystemBase systems are classes.
-    // They are not Burst compiled, and can use managed code.
-    partial class TankMovementSystem : SystemBase
+    public partial struct TankMovementSystem : ISystem
     {
-        protected override void OnUpdate()
+        [BurstCompile]
+        public void OnCreate(ref SystemState state)
         {
-            // The Entities.ForEach below is Burst compiled (implicitly).
-            // And time is a member of SystemBase, which is a managed type (class).
-            // This means that it wouldn't be possible to directly access Time from there.
-            // So we need to copy the value we need (DeltaTime) into a local variable.
+        }
+
+        [BurstCompile]
+        public void OnUpdate(ref SystemState state)
+        {
             var dt = SystemAPI.Time.DeltaTime;
 
-            // Entities.ForEach is an older approach to processing queries. Its use is not
-            // encouraged, but it remains convenient until we get feature parity with IFE.
-            Entities
-                .WithAll<Tank>()
-                .ForEach((TransformAspect transform) =>
-                {
-                    // Notice that this is a lambda being passed as parameter to ForEach.
-                    var pos = transform.LocalPosition;
+            foreach (var (transform, entity) in
+                    SystemAPI.Query<RefRW<LocalTransform>>()
+                        .WithAll<Tank>()
+                        .WithEntityAccess())
+            {
+                var pos = transform.ValueRO.Position;
 
-                    // Unity.Mathematics.noise provides several types of noise functions.
-                    // Here we use the Classic Perlin Noise (cnoise).
-                    // The approach taken to generate a flow field from Perlin noise is detailed here:
-                    // https://www.bit-101.com/blog/2021/07/mapping-perlin-noise-to-angles/
-                    var angle = (0.5f + noise.cnoise(pos / 10f)) * 4.0f * math.PI;
+                // This does not modify the actual position of the tank, only the point at
+                // which we sample the 3D noise function. This way, every tank is using a
+                // different slice and will move along its own different random flow field.
+                pos.y = (float)entity.Index;
 
-                    var dir = float3.zero;
-                    math.sincos(angle, out dir.x, out dir.z);
-                    transform.LocalPosition += dir * dt * 5.0f;
-                    transform.LocalRotation = quaternion.RotateY(angle);
+                var angle = (0.5f + noise.cnoise(pos / 10f)) * 4.0f * math.PI;
+                var dir = float3.zero;
+                math.sincos(angle, out dir.x, out dir.z);
 
-                    // The last function call in the Entities.ForEach sequence controls how the code
-                    // should be executed: Run (main thread), Schedule (single thread, async), or
-                    // ScheduleParallel (multiple threads, async).
-                    // Entities.ForEach is fundamentally a job generator, and it makes it very easy to
-                    // create parallel jobs. This unfortunately comes with a complexity cost and weird
-                    // arbitrary constraints, which is why more explicit approaches are preferred.
-                    // Those explicit approaches (IJobEntity) are covered later in this tutorial.
-                }).ScheduleParallel();
+                transform.ValueRW.Position += dir * dt * 5.0f;
+                transform.ValueRW.Rotation = quaternion.RotateY(angle);
+            }
         }
     }
+
     ```
 
 1. 这时进行 play 会看到如下图的效果。<p>
@@ -288,8 +294,8 @@ com.unity.entities.grpaphics **1.0.0-pre.15**
 
     ```c#
     using Unity.Entities;
-    using Unity.Rendering;
     using Unity.Mathematics;
+    using Unity.Rendering;
 
     class CannonBallAuthoring : UnityEngine.MonoBehaviour
     {
@@ -297,20 +303,20 @@ com.unity.entities.grpaphics **1.0.0-pre.15**
         {
             public override void Bake(CannonBallAuthoring authoring)
             {
-                // By default, components are zero-initialized.
-                // So in this case, the Speed field in CannonBall will be float3.zero.
-                AddComponent<CannonBall>();
+                var entity = GetEntity(TransformUsageFlags.Dynamic);
+
+                // By default, components are zero-initialized,
+                // so the Velocity field of CannonBall will be float3.zero.
+                AddComponent<CannonBall>(entity);
             }
         }
     }
-    
-    // Same approach for the cannon ball, we are creating a component to identify the entities.
-    // But this time it's not a tag component (empty) because it contains data: the Speed field.
-    // It won't be used immediately, but will become relevant when we implement motion.
-    struct CannonBall : IComponentData
+
+    public struct CannonBall : IComponentData
     {
-        public float3 Speed;
+        public float3 Velocity;
     }
+
     ```
 
 1. 右键点击 Hierarchy 窗口中的 "SampleScene" ，创建一个 `GameObject > 3D Object > Sphere` 命名为 "CannonBall" 。设置它的 Position 为 (0,0,0) ，Rotation 为 (0,0,0) ，**Scale** 为 (0.2,0.2,0.2) 。
@@ -327,37 +333,40 @@ com.unity.entities.grpaphics **1.0.0-pre.15**
 1. 修改 "Scripts/Authoring" 目录下的 "TurretAuthoring.cs" 文件：
 
     ```diff
-     using Unity.Entities;
-     
-    class TurretAuthoring : UnityEngine.MonoBehaviour
-    {
-    +    public UnityEngine.GameObject CannonBallPrefab;
-    +    public UnityEngine.Transform CannonBallSpawn;
+    using Unity.Entities;
+    using UnityEngine;
 
-        class TurretBaker : Baker<TurretAuthoring>
+    class TurretAuthoring : MonoBehaviour
+    {
+        // Bakers convert authoring MonoBehaviours into entities and components.
+    +    public GameObject CannonBallPrefab;
+    +    public Transform CannonBallSpawn;
+
+        class Baker : Baker<TurretAuthoring>
         {
             public override void Bake(TurretAuthoring authoring)
             {
-        -        AddComponent<Turret>();
-        +        AddComponent(new Turret
-        +        {
-        +            // By default, each authoring GameObject turns into an Entity.
-        +            // Given a GameObject (or authoring component), GetEntity looks up the resulting Entity.
-        +            CannonBallPrefab = GetEntity(authoring.CannonBallPrefab),
-        +            CannonBallSpawn = GetEntity(authoring.CannonBallSpawn)
-        +        });
+                // GetEntity returns the baked Entity form of a GameObject.
+                var entity = GetEntity(TransformUsageFlags.Dynamic);
+    -            AddComponent<Turret>(entity);
+    +            AddComponent(entity, new Turret
+    +            {
+    +                CannonBallPrefab = GetEntity(authoring.CannonBallPrefab, TransformUsageFlags.Dynamic),
+    +                CannonBallSpawn = GetEntity(authoring.CannonBallSpawn, TransformUsageFlags.Dynamic)
+    +            });
             }
         }
     }
 
-    struct Turret : IComponentData
+    public struct Turret : IComponentData
     {
     +    // This entity will reference the nozzle of the cannon, where cannon balls should be spawned.
     +    public Entity CannonBallSpawn;
-     
+
     +    // This entity will reference the prefab to be spawned every time the cannon shoots.
     +    public Entity CannonBallPrefab;
     }
+
     ```
 
 1. 选择 "Turret" GameObject ，设置 "Turret Authoring" component 新的属性 "CannonBallPrefab" 和 "CannonBallSpawn" ， "CannonBallPrefab" 使用 "CannonBall" prefab ， "CannonBallSpawn" 选择 Hierarchy 窗口中的 "SpawnPoint" GameObject 。<p>
@@ -384,91 +393,48 @@ com.unity.entities.grpaphics **1.0.0-pre.15**
     }
     ```
 
-1. 
-    | &#x1F4DD; NOTE |
-    | :- |
-    | The following step uses `ComponentLookup<T>` which provides random access to typed components. For more information about this feature, check the [API Documentation](https://docs.unity3d.com/Packages/com.unity.entities@latest/index.html?subfolder=/api/Unity.Entities.ComponentLookup-1.html). |
-
-在目录 "Scripts/Systems" 中创建新的脚本文件 "TurretShootingSystem.cs" ，填写如下内容：
+1. 在目录 "Scripts/Systems" 中创建新的脚本文件 "TurretShootingSystem.cs" ，填写如下内容：
 
     ```c#
     using Unity.Burst;
-    using Unity.Collections;
     using Unity.Entities;
+    using Unity.Mathematics;
     using Unity.Rendering;
     using Unity.Transforms;
 
-    [BurstCompile]
-    partial struct TurretShootingSystem : ISystem
+    [UpdateInGroup(typeof(LateSimulationSystemGroup))]
+    public partial struct TurretShootingSystem : ISystem
     {
-        // A ComponentLookup provides random access to a component (looking up an entity).
-        // We'll use it to extract the world space position and orientation of the spawn point (cannon nozzle).
-        ComponentLookup<WorldTransform> m_WorldTransformLookup;
-
         [BurstCompile]
         public void OnCreate(ref SystemState state)
-        {
-            // ComponentLookup structures have to be initialized once.
-            // The parameter specifies if the lookups will be read only or if they should allow writes.
-            m_WorldTransformLookup = state.GetComponentLookup<WorldTransform>(true);
-        }
-
-        [BurstCompile]
-        public void OnDestroy(ref SystemState state)
         {
         }
 
         [BurstCompile]
         public void OnUpdate(ref SystemState state)
         {
-            // ComponentLookup structures have to be updated every frame.
-            m_WorldTransformLookup.Update(ref state);
-
-            // Creating an EntityCommandBuffer to defer the structural changes required by instantiation.
-            var ecbSingleton = SystemAPI.GetSingleton<BeginSimulationEntityCommandBufferSystem.Singleton>();
-            var ecb = ecbSingleton.CreateCommandBuffer(state.WorldUnmanaged);
-
-            // Creating an instance of the job.
-            // Passing it the ComponentLookup required to get the world transform of the spawn point.
-            // And the entity command buffer the job can write to.
-            var turretShootJob = new TurretShoot
+            foreach (var (turret, localToWorld) in
+                    SystemAPI.Query<TurretAspect, RefRO<LocalToWorld>>()
+                        .WithAll<Shooting>())
             {
-                WorldTransformLookup = m_WorldTransformLookup,
-                ECB = ecb
-            };
+                Entity instance = state.EntityManager.Instantiate(turret.CannonBallPrefab);
 
-            // Schedule execution in a single thread, and do not block main thread.
-            turretShootJob.Schedule();
-        }
-    }
+                state.EntityManager.SetComponentData(instance, new LocalTransform
+                {
+                    Position = SystemAPI.GetComponent<LocalToWorld>(turret.CannonBallSpawn).Position,
+                    Rotation = quaternion.identity,
+                    Scale = SystemAPI.GetComponent<LocalTransform>(turret.CannonBallPrefab).Scale
+                });
 
-    [BurstCompile]
-    partial struct TurretShoot : IJobEntity
-    {
-        [ReadOnly] public ComponentLookup<LocalToWorldTransform> WorldTransformLookup;
-        public EntityCommandBuffer ECB;
-
-        // Note that the TurretAspects parameter is "in", which declares it as read only.
-        // Making it "ref" (read-write) would not make a difference in this case, but you
-        // will encounter situations where potential race conditions trigger the safety system.
-        // So in general, using "in" everywhere possible is a good principle.
-        void Execute(in TurretAspect turret)
-        {
-            var instance = ECB.Instantiate(turret.CannonBallPrefab);
-            var spawnLocalToWorld = WorldTransformLookup[turret.CannonBallSpawn];
-            var cannonBallTransform = LocalTransform.FromPosition(spawnLocalToWorld.Position);
-
-            // We are about to overwrite the transform of the new instance. If we didn't explicitly
-            // copy the scale it would get reset to 1 and we'd have oversized cannon balls.
-            cannonBallTransform.Scale = WorldTransformLookup[turret.CannonBallPrefab].Scale;
-            ECB.SetComponent(instance, cannonBallTransform);
-            ECB.SetComponent(instance, new CannonBall
-            {
-                Speed = spawnLocalToWorld.Forward() * 20.0f
-            });
+                state.EntityManager.SetComponentData(instance, new CannonBall
+                {
+                    Velocity = localToWorld.ValueRO.Up * 20.0f
+                });
+            }
         }
     }
     ```
+
 
 1. play 。<p>
 ![](images/cannon_ball_trail.gif)
@@ -476,78 +442,42 @@ com.unity.entities.grpaphics **1.0.0-pre.15**
 ## 第五步 炮弹移动
 > 学习并行 jobs.
 
-1. 在目录 "Scripts/Aspects" 中创建新的脚本文件 "CannonBallAspect.cs" ，填写如下内容：
-
-    ```c#
-    using Unity.Entities;
-    using Unity.Mathematics;
-    using Unity.Transforms;
-
-    readonly partial struct CannonBallAspect : IAspect
-    {
-        // An Entity field in an aspect provides access to the entity itself.
-        // This is required for registering commands in an EntityCommandBuffer for example.
-        public readonly Entity Self;
-
-        // Aspects can contain other aspects.
-        readonly TransformAspect Transform;
-
-        // A RefRW field provides read write access to a component. If the aspect is taken as an "in"
-        // parameter, the field will behave as if it was a RefRO and will throw exceptions on write attempts.
-        readonly RefRW<CannonBall> CannonBall;
-
-        // Properties like this are not mandatory, the Transform field could just have been made public instead.
-        // But they improve readability by avoiding chains of "aspect.aspect.aspect.component.value.value".
-        public float3 Position
-        {
-            get => Transform.LocalPosition;
-            set => Transform.LocalPosition = value;
-        }
-
-        public float3 Speed
-        {
-            get => CannonBall.ValueRO.Speed;
-            set => CannonBall.ValueRW.Speed = value;
-        }
-    }
-    ```
 1. 在目录 "Scripts/Systems" 中创建新的脚本文件 "CannonBallSystem.cs" ，填写如下内容：
 
     ```c#
     using Unity.Burst;
     using Unity.Entities;
     using Unity.Mathematics;
+    using Unity.Transforms;
 
-    [BurstCompile]
     // IJobEntity relies on source generation to implicitly define a query from the signature of the Execute function.
-    partial struct CannonBallJob : IJobEntity
+    [BurstCompile]
+    public partial struct CannonBallJob : IJobEntity
     {
-        // A regular EntityCommandBuffer cannot be used in parallel, a ParallelWriter has to be explicitly used.
-        public EntityCommandBuffer.ParallelWriter ECB;
-        // Time cannot be directly accessed from a job, so DeltaTime has to be passed in as a parameter.
+        public EntityCommandBuffer ECB;
         public float DeltaTime;
 
-        // The ChunkIndexInQuery attributes maps the chunk index to an int parameter.
-        // Each chunk can only be processed by a single thread, so those indices are unique to each thread.
-        // They are also fully deterministic, regardless of the amounts of parallel processing happening.
-        // So those indices are used as a sorting key when recording commands in the EntityCommandBuffer,
-        // this way we ensure that the playback of commands is always deterministic.
-        void Execute([ChunkIndexInQuery] int chunkIndex, ref CannonBallAspect cannonBall)
+        void Execute(Entity entity, ref CannonBall cannonBall, ref LocalTransform transform)
         {
             var gravity = new float3(0.0f, -9.82f, 0.0f);
             var invertY = new float3(1.0f, -1.0f, 1.0f);
 
-            cannonBall.Position += cannonBall.Speed * DeltaTime;
-            if (cannonBall.Position.y < 0.0f)
+            transform.Position += cannonBall.Velocity * DeltaTime;
+
+            // bounce on the ground
+            if (transform.Position.y < 0.0f)
             {
-                cannonBall.Position *= invertY;
-                cannonBall.Speed *= invertY * 0.8f;
+                transform.Position *= invertY;
+                cannonBall.Velocity *= invertY * 0.8f;
             }
 
-            cannonBall.Speed += gravity * DeltaTime;
+            cannonBall.Velocity += gravity * DeltaTime;
 
-            var speed = math.lengthsq(cannonBall.Speed);
-            if (speed < 0.1f) ECB.DestroyEntity(chunkIndex, cannonBall.Self);
+            var speed = math.lengthsq(cannonBall.Velocity);
+            if (speed < 0.1f)
+            {
+                ECB.DestroyEntity(entity);
+            }
         }
     }
 
@@ -557,28 +487,24 @@ com.unity.entities.grpaphics **1.0.0-pre.15**
         [BurstCompile]
         public void OnCreate(ref SystemState state)
         {
-        }
-
-        [BurstCompile]
-        public void OnDestroy(ref SystemState state)
-        {
+            state.RequireForUpdate<CannonBall>();
         }
 
         [BurstCompile]
         public void OnUpdate(ref SystemState state)
         {
             var ecbSingleton = SystemAPI.GetSingleton<EndSimulationEntityCommandBufferSystem.Singleton>();
-            var ecb = ecbSingleton.CreateCommandBuffer(state.WorldUnmanaged);
+
             var cannonBallJob = new CannonBallJob
             {
-                // Note the function call required to get a parallel writer for an EntityCommandBuffer.
-                ECB = ecb.AsParallelWriter(),
-                // Time cannot be directly accessed from a job, so DeltaTime has to be passed in as a parameter.
+                ECB = ecbSingleton.CreateCommandBuffer(state.WorldUnmanaged),
                 DeltaTime = SystemAPI.Time.DeltaTime
             };
-            cannonBallJob.ScheduleParallel();
+
+            cannonBallJob.Schedule();
         }
     }
+
     ```
 
 1. play 。<p>
@@ -594,28 +520,30 @@ com.unity.entities.grpaphics **1.0.0-pre.15**
 
     ```c#
     using Unity.Entities;
+    using UnityEngine;
 
-    class ConfigAuthoring : UnityEngine.MonoBehaviour
+    public class ConfigAuthoring : MonoBehaviour
     {
-        public UnityEngine.GameObject TankPrefab;
+        public GameObject TankPrefab;
         public int TankCount;
         public float SafeZoneRadius;
 
-        class ConfigBaker : Baker<ConfigAuthoring>
+        class Baker : Baker<ConfigAuthoring>
         {
             public override void Bake(ConfigAuthoring authoring)
             {
-                AddComponent(new Config
+                var entity = GetEntity(TransformUsageFlags.None);
+                AddComponent(entity, new Config
                 {
-                    TankPrefab = GetEntity(authoring.TankPrefab),
+                    TankPrefab = GetEntity(authoring.TankPrefab, TransformUsageFlags.Dynamic),
                     TankCount = authoring.TankCount,
                     SafeZoneRadius = authoring.SafeZoneRadius
                 });
             }
         }
-    }    
+    }
 
-    struct Config : IComponentData
+    public struct Config : IComponentData
     {
         public Entity TankPrefab;
         public int TankCount;
@@ -642,75 +570,34 @@ com.unity.entities.grpaphics **1.0.0-pre.15**
     using Unity.Entities;
     using Unity.Mathematics;
     using Unity.Rendering;
+    using UnityEngine;
 
-    [BurstCompile]
     partial struct TankSpawningSystem : ISystem
     {
         [BurstCompile]
         public void OnCreate(ref SystemState state)
         {
-        }
-
-        [BurstCompile]
-        public void OnDestroy(ref SystemState state)
-        {
+            state.RequireForUpdate<Config>();
         }
 
         [BurstCompile]
         public void OnUpdate(ref SystemState state)
         {
-            var config = SystemAPI.GetSingleton<Config>();
-
-            var ecbSingleton = SystemAPI.GetSingleton<BeginSimulationEntityCommandBufferSystem.Singleton>();
-            var ecb = ecbSingleton.CreateCommandBuffer(state.WorldUnmanaged);
-
-            var vehicles = CollectionHelper.CreateNativeArray<Entity>(config.TankCount, Allocator.Temp);
-            ecb.Instantiate(config.TankPrefab, vehicles);
-
-            // This system should only run once at startup. So it disables itself after one update.
             state.Enabled = false;
+
+            var config = SystemAPI.GetSingleton<Config>();
+            var query = SystemAPI.QueryBuilder().WithAll<URPMaterialPropertyBaseColor>().Build();
+            // An EntityQueryMask provides an efficient test of whether a specific entity would
+            // be selected by an EntityQuery.
+            var queryMask = query.GetEntityQueryMask();
+
+            var ecb = new EntityCommandBuffer(Allocator.Temp);
+            var tanks = new NativeArray<Entity>(config.TankCount, Allocator.Temp);
+            ecb.Instantiate(config.TankPrefab, tanks);
+            ecb.Playback(state.EntityManager);
         }
     }
-    ```
 
-    | &#x26A0; 注意 |
-    | :- |
-    | 这时进行 play 的话，只会看到一个坦克。事实上是有 20 个坦克，只是它们的运动轨迹重叠在一起了。|
-
-1. 修改 "Scripts/Systems" 目录下的 "TankMovementSystem.cs" 文件：
-
-    ```diff
-     using Unity.Entities;
-     using Unity.Mathematics;
-     using Unity.Transforms;
-     
-     partial class TankMovementSystem : SystemBase
-     {
-         protected override void OnUpdate()
-         {
-             var dt = SystemAPI.Time.DeltaTime;
-     
-             Entities
-                 .WithAll<Tank>()
-    -            .ForEach((TransformAspect transform) =>
-    +            .ForEach((Entity entity, TransformAspect transform) =>
-                 {
-                     var pos = transform.LocalPosition;
-     
-    +                // This does not modify the actual position of the tank, only the point at
-    +                // which we sample the 3D noise function. This way, every tank is using a
-    +                // different slice and will move along its own different random flow field.
-    +                pos.y = entity.Index;
-                     var angle = (0.5f + noise.cnoise(pos / 10f)) * 4.0f * math.PI;
-     
-                     var dir = float3.zero;
-                     math.sincos(angle, out dir.x, out dir.z);
-                     transform.LocalPosition += dir * dt * 5.0f;
-                     transform.LocalRotation = quaternion.RotateY(angle);
-     
-                 }).ScheduleParallel();
-         }
-     }
     ```
 
 1. play 。<p>
@@ -733,75 +620,62 @@ ECS components can control the inputs to the shaders used for rendering. Creatin
     修改 "Scripts/Systems" 目录下的 "TankSpawningSystem.cs" 文件：
 
     ```diff
-     using Unity.Burst;
-     using Unity.Collections;
-     using Unity.Entities;
-     using Unity.Mathematics;
-     using Unity.Rendering;
-     
-     [BurstCompile]
-     partial struct TankSpawningSystem : ISystem
-     {
-    +    // Queries should not be created on the spot in OnUpdate, so they are cached in fields.
-    +    EntityQuery m_BaseColorQuery;
-     
-         [BurstCompile]
-         public void OnCreate(ref SystemState state)
-         {
-    +        // This system should not run before the Config singleton has been loaded.
-    +        state.RequireForUpdate<Config>();
-     
-    +        m_BaseColorQuery = state.GetEntityQuery(ComponentType.ReadOnly<URPMaterialPropertyBaseColor>());
-         }
-     
-         [BurstCompile]
-         public void OnDestroy(ref SystemState state)
-         {
-         }
-     
-         [BurstCompile]
-         public void OnUpdate(ref SystemState state)
-         {
-             var config = SystemAPI.GetSingleton<Config>();
-     
-    +        // This system will only run once, so the random seed can be hard-coded.
-    +        // Using an arbitrary constant seed makes the behavior deterministic.
-    +        var random = Random.CreateFromIndex(1234);
-    +        var hue = random.NextFloat();
-     
-    +        // Helper to create any amount of colors as distinct from each other as possible.
-    +        // The logic behind this approach is detailed at the following address:
-    +        // https://martin.ankerl.com/2009/12/09/how-to-create-random-colors-programmatically/
-    +        URPMaterialPropertyBaseColor RandomColor()
+    using Unity.Burst;
+    using Unity.Collections;
+    using Unity.Entities;
+    using Unity.Mathematics;
+    using Unity.Rendering;
+    using UnityEngine;
+    +   using Random = Unity.Mathematics.Random;
+
+    partial struct TankSpawningSystem : ISystem
+    {
+        [BurstCompile]
+        public void OnCreate(ref SystemState state)
+        {
+            state.RequireForUpdate<Config>();
+        }
+
+        [BurstCompile]
+        public void OnUpdate(ref SystemState state)
+        {
+            state.Enabled = false;
+
+            var config = SystemAPI.GetSingleton<Config>();
+            // This system will only run once, so the random seed can be hard-coded.
+            // Using an arbitrary constant seed makes the behavior deterministic.
+    +        var random = new Random(123);
+
+            var query = SystemAPI.QueryBuilder().WithAll<URPMaterialPropertyBaseColor>().Build();
+            // An EntityQueryMask provides an efficient test of whether a specific entity would
+            // be selected by an EntityQuery.
+            var queryMask = query.GetEntityQueryMask();
+
+            var ecb = new EntityCommandBuffer(Allocator.Temp);
+            var tanks = new NativeArray<Entity>(config.TankCount, Allocator.Temp);
+            ecb.Instantiate(config.TankPrefab, tanks);
+
+    +        foreach (var tank in tanks)
     +        {
-    +            // Note: if you are not familiar with this concept, this is a "local function".
-    +            // You can search for that term on the internet for more information.
-     
-    +            // 0.618034005f == 2 / (math.sqrt(5) + 1) == inverse of the golden ratio
-    +            hue = (hue + 0.618034005f) % 1;
-    +            var color = UnityEngine.Color.HSVToRGB(hue, 1.0f, 1.0f);
-    +            return new URPMaterialPropertyBaseColor { Value = (UnityEngine.Vector4)color };
+    +            // Every root entity instantiated from a prefab has a LinkedEntityGroup component, which
+    +            // is a list of all the entities that make up the prefab hierarchy.
+    +            ecb.SetComponentForLinkedEntityGroup(tank, queryMask,
+    +                new URPMaterialPropertyBaseColor { Value = RandomColor(ref random) });
     +        }
-     
-             var ecbSingleton = SystemAPI.GetSingleton<BeginSimulationEntityCommandBufferSystem.Singleton>();
-             var ecb = ecbSingleton.CreateCommandBuffer(state.WorldUnmanaged);
-     
-             var vehicles = CollectionHelper.CreateNativeArray<Entity>(config.TankCount, Allocator.Temp);
-             ecb.Instantiate(config.TankPrefab, vehicles);
-     
-    +        // An EntityQueryMask provides an efficient test of whether a specific entity would
-    +        // be selected by an EntityQuery.
-    +        var queryMask = m_BaseColorQuery.GetEntityQueryMask();
-     
-    +        foreach (var vehicle in vehicles)
-    +        {
-    +            // Every prefab root contains a LinkedEntityGroup, a list of all of its entities.
-    +            ecb.SetComponentForLinkedEntityGroup(vehicle, queryMask, RandomColor());
-    +        }
-     
-             state.Enabled = false;
-         }
-     }
+
+            ecb.Playback(state.EntityManager);
+        }
+
+        // Helper to create any amount of colors as distinct from each other as possible.
+        // See https://martin.ankerl.com/2009/12/09/how-to-create-random-colors-programmatically/
+        static float4 RandomColor(ref Random random)
+        {
+            // 0.618034005f is inverse of the golden ratio
+            var hue = (random.NextFloat() + 0.618034005f) % 1;
+            return (Vector4)Color.HSVToRGB(hue, 1.0f, 1.0f);
+        }
+    }
+
     ```
 
 1. play 。<p>
@@ -811,73 +685,104 @@ ECS components can control the inputs to the shaders used for rendering. Creatin
 
     ```diff
     using Unity.Entities;
+    using Unity.Mathematics;
     using Unity.Rendering;
-    
+
     class CannonBallAuthoring : UnityEngine.MonoBehaviour
     {
         class CannonBallBaker : Baker<CannonBallAuthoring>
         {
             public override void Bake(CannonBallAuthoring authoring)
             {
-                AddComponent<CannonBall>();
-        +        AddComponent<URPMaterialPropertyBaseColor>();
+                var entity = GetEntity(TransformUsageFlags.Dynamic);
+
+                // By default, components are zero-initialized,
+                // so the Velocity field of CannonBall will be float3.zero.
+                AddComponent<CannonBall>(entity);
+
+    +            AddComponent<URPMaterialPropertyBaseColor>(entity);
             }
         }
     }
 
-    struct CannonBall : IComponentData
+    public struct CannonBall : IComponentData
     {
-        public float3 Speed;
+        public float3 Velocity;
     }
+
     ```
 
 1. 修改 "Scripts/Aspects" 目录下的 "TurretAspect.cs" 文件：
 
     ```diff
-     using Unity.Entities;
-     using Unity.Mathematics;
-     using Unity.Rendering;
-     
-     readonly partial struct TurretAspect : IAspect
-     {
-         readonly RefRO<Turret> m_Turret;
+    using Unity.Entities;
+    using Unity.Mathematics;
+    using Unity.Rendering;
+
+    // Instead of directly accessing the Turret component, we are creating an aspect.
+    // Aspects allows you to provide a customized API for accessing components.
+    public readonly partial struct TurretAspect : IAspect
+    {
+        // This reference provides read only access to the Turret component.
+        // Trying to access ValueRW (instead of ValueRO) from a RefRO is an error.
+        readonly RefRO<Turret> m_Turret;
+
+        // can represent entities which do not have this component.
     +    readonly RefRO<URPMaterialPropertyBaseColor> m_BaseColor;
-     
-         public Entity CannonBallSpawn => m_Turret.ValueRO.CannonBallSpawn;
-         public Entity CannonBallPrefab => m_Turret.ValueRO.CannonBallPrefab;
+
+        public Entity CannonBallSpawn => m_Turret.ValueRO.CannonBallSpawn;
+        public Entity CannonBallPrefab => m_Turret.ValueRO.CannonBallPrefab;
     +    public float4 Color => m_BaseColor.ValueRO.Value;
-     }
+    }
+
     ```
 
 1. 修改 "Scripts/Systems" 目录下的 "TurretShootingSystem.cs" 文件：
 
     ```diff
-     [BurstCompile]
-     partial struct TurretShoot : IJobEntity
-     {
-         [ReadOnly] public ComponentLookup<LocalToWorldTransform> LocalToWorldTransformFromEntity;
-         public EntityCommandBuffer ECB;
-     
-         void Execute(in TurretAspect turret)
-         {
-             var instance = ECB.Instantiate(turret.CannonBallPrefab);
-             var spawnLocalToWorld = LocalToWorldTransformFromEntity[turret.CannonBallSpawn];
-             var cannonBallTransform = UniformScaleTransform.FromPosition(spawnLocalToWorld.Value.Position);
-     
-             cannonBallTransform.Scale = LocalToWorldTransformFromEntity[turret.CannonBallPrefab].Scale;
-             ECB.SetComponent(instance, new LocalToWorldTransform
-             {
-                 Value = cannonBallTransform
-             });
-             ECB.SetComponent(instance, new CannonBall
-             {
-                 Speed = spawnLocalToWorld.Forward() * 20.0f
-             });
-     
-    +         // The line below propagates the color from the turret to the cannon ball.
-    +         ECB.SetComponent(instance, new URPMaterialPropertyBaseColor { Value = turret.Color });
-         }
-     }
+    using Unity.Burst;
+    using Unity.Entities;
+    using Unity.Mathematics;
+    using Unity.Rendering;
+    using Unity.Transforms;
+
+    [UpdateInGroup(typeof(LateSimulationSystemGroup))]
+    public partial struct TurretShootingSystem : ISystem
+    {
+        [BurstCompile]
+        public void OnCreate(ref SystemState state)
+        {
+        }
+
+        [BurstCompile]
+        public void OnUpdate(ref SystemState state)
+        {
+            foreach (var (turret, localToWorld) in
+                    SystemAPI.Query<TurretAspect, RefRO<LocalToWorld>>()
+                        .WithAll<Shooting>())
+            {
+                Entity instance = state.EntityManager.Instantiate(turret.CannonBallPrefab);
+
+                state.EntityManager.SetComponentData(instance, new LocalTransform
+                {
+                    Position = SystemAPI.GetComponent<LocalToWorld>(turret.CannonBallSpawn).Position,
+                    Rotation = quaternion.identity,
+                    Scale = SystemAPI.GetComponent<LocalTransform>(turret.CannonBallPrefab).Scale
+                });
+
+                state.EntityManager.SetComponentData(instance, new CannonBall
+                {
+                    Velocity = localToWorld.ValueRO.Up * 20.0f
+                });
+
+    +            state.EntityManager.SetComponentData(instance, new URPMaterialPropertyBaseColor
+    +            {
+    +                Value = turret.Color
+    +            });
+            }
+        }
+    }
+
     ```
 
 1. play 。<p>
@@ -885,46 +790,36 @@ ECS components can control the inputs to the shaders used for rendering. Creatin
 
 ## 第八步 安全区
 
-1. 在目录 "Scripts/Authoring/Components" 中创建新的脚本文件 "Shooting.cs" ，填写如下内容：
-
-    ```c#
-    using Unity.Entities;
-
-    // This is a tag component that is also an "enableable component".
-    // Such components can be toggled on and off while remaining present on the entity.
-    // Doing so is a lot more efficient than adding and removing the component.
-    struct Shooting : IComponentData, IEnableableComponent
-    {
-    }
-    ```
-
 1. 修改 "Scripts/Authoring" 目录下的 "TurretAuthoring.cs" 文件：
 
     ```diff
     using Unity.Entities;
-     
-    class TurretAuthoring : UnityEngine.MonoBehaviour
-    {
-        public UnityEngine.GameObject CannonBallPrefab;
-        public UnityEngine.Transform CannonBallSpawn;
+    using UnityEngine;
 
-        class TurretBaker : Baker<TurretAuthoring>
+    class TurretAuthoring : MonoBehaviour
+    {
+        // Bakers convert authoring MonoBehaviours into entities and components.
+        public GameObject CannonBallPrefab;
+        public Transform CannonBallSpawn;
+
+        class Baker : Baker<TurretAuthoring>
         {
             public override void Bake(TurretAuthoring authoring)
             {
-                AddComponent(new Turret
+                // GetEntity returns the baked Entity form of a GameObject.
+                var entity = GetEntity(TransformUsageFlags.Dynamic);
+                AddComponent(entity, new Turret
                 {
-                    CannonBallPrefab = GetEntity(authoring.CannonBallPrefab),
-                    CannonBallSpawn = GetEntity(authoring.CannonBallSpawn)
+                    CannonBallPrefab = GetEntity(authoring.CannonBallPrefab, TransformUsageFlags.Dynamic),
+                    CannonBallSpawn = GetEntity(authoring.CannonBallSpawn, TransformUsageFlags.Dynamic)
                 });
 
-        +        // Enableable components are always initially enabled.
-        +        AddComponent<Shooting>();
+    +            AddComponent<Shooting>(entity);
             }
         }
     }
 
-    struct Turret : IComponentData
+    public struct Turret : IComponentData
     {
         // This entity will reference the nozzle of the cannon, where cannon balls should be spawned.
         public Entity CannonBallSpawn;
@@ -932,115 +827,74 @@ ECS components can control the inputs to the shaders used for rendering. Creatin
         // This entity will reference the prefab to be spawned every time the cannon shoots.
         public Entity CannonBallPrefab;
     }
+
+    + // This is a tag component that is also an "enableable component".
+    + // Such components can be toggled on and off without removing the component from the entity,
+    + // which would be less efficient and wouldn't retain the component's value.
+    + // An Enableable component is initially enabled.
+    + public struct Shooting : IComponentData, IEnableableComponent
+    + {
+    + }
+
     ```
 
 1. 在目录 "Scripts/Systems" 中创建新的脚本文件 "SafeZoneSystem.cs" ，填写如下内容：
 
     ```c#
     using Unity.Burst;
-    using Unity.Collections;
     using Unity.Entities;
     using Unity.Mathematics;
     using Unity.Transforms;
+    using UnityEngine;
 
-    // Requires the Turret type without processing it (it's not part of the Execute method).
-    [WithAll(typeof(Turret))]
-    [BurstCompile]
-    partial struct SafeZoneJob : IJobEntity
+    [UpdateBefore(typeof(TurretShootingSystem))]
+    [UpdateInGroup(typeof(LateSimulationSystemGroup))]
+    public partial struct SafeZoneSystem : ISystem
     {
-        // When running this job in parallel, the safety system will complain about a
-        // potential race condition with ShootingLookup because accessing the same entity
-        // from different threads would cause problems.
-        // But the code of this job is written in such a way that only the entity being currently
-        // processed will be looked up in TurretActiveFromEntity, making this process safe.
-        // So we can disable the parallel safety check.
-        [NativeDisableParallelForRestriction] public ComponentLookup<Shooting> ShootingLookup;
-
-        public float SquaredRadius;
-
-        void Execute(Entity entity, TransformAspect transform)
-        {
-            // The tag component Shooting will be enabled only if the tank is outside the given range.
-            ShootingLookup.SetComponentEnabled(entity, math.lengthsq(transform.Position) > SquaredRadius);
-        }
-    }
-
-    [BurstCompile]
-    partial struct SafeZoneSystem : ISystem
-    {
-        // The ComponentLookup random accessors should not be created on the spot.
-        // Just like EntityQuery, they should be created once and stored in a field.
-        ComponentLookup<Shooting> m_ShootingLookup;
-
         [BurstCompile]
         public void OnCreate(ref SystemState state)
         {
             state.RequireForUpdate<Config>();
-
-            m_ShootingLookup = state.GetComponentLookup<Shooting>();
-        }
-
-        [BurstCompile]
-        public void OnDestroy(ref SystemState state)
-        {
         }
 
         [BurstCompile]
         public void OnUpdate(ref SystemState state)
         {
             float radius = SystemAPI.GetSingleton<Config>().SafeZoneRadius;
-            const float debugRenderStepInDegrees = 20;
 
             // Debug rendering (the white circle).
+            const float debugRenderStepInDegrees = 20;
             for (float angle = 0; angle < 360; angle += debugRenderStepInDegrees)
             {
                 var a = float3.zero;
                 var b = float3.zero;
                 math.sincos(math.radians(angle), out a.x, out a.z);
                 math.sincos(math.radians(angle + debugRenderStepInDegrees), out b.x, out b.z);
-                UnityEngine.Debug.DrawLine(a * radius, b * radius);
+                Debug.DrawLine(a * radius, b * radius);
             }
 
-            m_TurretActiveFromEntity.Update(ref state);
             var safeZoneJob = new SafeZoneJob
             {
-                ShootingLookup = m_ShootingLookup,
                 SquaredRadius = radius * radius
             };
             safeZoneJob.ScheduleParallel();
         }
     }
-    ```
 
-1. 修改 "Scripts/Systems" 目录下的 "TurretShootingSystem.cs" 文件：
+    [WithAll(typeof(Turret))]
+    [WithOptions(EntityQueryOptions.IgnoreComponentEnabledState)]
+    [BurstCompile]
+    public partial struct SafeZoneJob : IJobEntity
+    {
+        public float SquaredRadius;
 
-    ```diff
-    +// Requiring the Shooting tag component effectively prevents this job from running
-    +// for the tanks which are in the safe zone.
-    +[WithAll(typeof(Shooting))]
-     [BurstCompile]
-     partial struct TurretShoot : IJobEntity
-     {
-         [ReadOnly] public ComponentLookup<WorldTransform> WorldTransformLookup;
-         public EntityCommandBuffer ECB;
-     
-         void Execute(in TurretAspect turret)
-         {
-             var instance = ECB.Instantiate(turret.CannonBallPrefab);
-             var spawnLocalToWorld = WorldTransformLookup[turret.CannonBallSpawn];
-             var cannonBallTransform = LocalTransform.FromPosition(spawnLocalToWorld.Position);
-     
-             cannonBallTransform.Scale = WorldTransformLookup[turret.CannonBallPrefab].Scale;
-             ECB.SetComponent(instance, cannonBallTransform);
-             ECB.SetComponent(instance, new CannonBall
-             {
-                 Speed = spawnLocalToWorld.Forward() * 20.0f
-             });
-     
-             // The line below propagates the color from the turret to the cannon ball.
-             ECB.SetComponent(instance, new URPMaterialPropertyBaseColor { Value = turret.Color });
-         }
-     }
+        // Because we want the global position of a child entity, we read LocalToWorld instead of LocalTransform.
+        void Execute(in LocalToWorld transformMatrix, EnabledRefRW<Shooting> shootingState)
+        {
+            shootingState.ValueRW = math.lengthsq(transformMatrix.Position) > SquaredRadius;
+        }
+    }
+
     ```
 
 1. play 。坦克只会在安全区外进行射击。如果没能看见安全区，请按下图操作。<p>
@@ -1056,15 +910,17 @@ ECS components can control the inputs to the shaders used for rendering. Creatin
 1. 在目录 "Scripts/MonoBehaviours" 中创建新的脚本文件 "CameraSingleton.cs" ，填写如下内容：
 
     ```c#
-    // There are many ways of getting access to the main camera, but the approach using
-    // a singleton (as we use here) works for any kind of MonoBehaviour.
-    class CameraSingleton : UnityEngine.MonoBehaviour
+    // There are many ways of getting access to the main camera, but the approach here using
+    // a singleton works for any kind of MonoBehaviour.
+    using UnityEngine;
+
+    public class CameraSingleton : MonoBehaviour
     {
-        public static UnityEngine.Camera Instance;
+        public static Camera Instance;
 
         void Awake()
         {
-            Instance = GetComponent<UnityEngine.Camera>();
+            Instance = GetComponent<Camera>();
         }
     }
     ```
@@ -1074,54 +930,54 @@ ECS components can control the inputs to the shaders used for rendering. Creatin
 1. 在目录 "Scripts/Systems" 中创建新的脚本文件 "CameraSystem.cs" ，填写如下内容：
 
     ```c#
+    using Unity.Burst;
     using Unity.Collections;
     using Unity.Entities;
-    using Unity.Mathematics;
     using Unity.Transforms;
+    using UnityEngine;
+    using Random = Unity.Mathematics.Random;
 
-    [BurstCompile]
     // This system should run after the transform system has been updated, otherwise the camera
-    // will lag one frame behind the tank and will jitter.
+    // will lag one frame behind the tank.
     [UpdateInGroup(typeof(LateSimulationSystemGroup))]
-    partial struct CameraSystem : ISystem
+    public partial struct CameraSystem : ISystem
     {
-        Entity Target;
-        Random Random;
-        EntityQuery TanksQuery;
+        Entity target;
+        Random random;
 
         [BurstCompile]
         public void OnCreate(ref SystemState state)
         {
-            Random = Random.CreateFromIndex(1234);
-            TanksQuery = SystemAPI.QueryBuilder().WithAll<Tank>().Build(); 
-            state.RequireForUpdate(TanksQuery);
-        }
-
-        [BurstCompile]
-        public void OnDestroy(ref SystemState state)
-        {
+            random = new Random(123);
         }
 
         // Because this OnUpdate accesses managed objects, it cannot be Burst-compiled.
         public void OnUpdate(ref SystemState state)
         {
-            if (Target == Entity.Null || UnityEngine.Input.GetKeyDown(UnityEngine.KeyCode.Space))
+            if (target == Entity.Null || Input.GetKeyDown(KeyCode.Space))
             {
-                var tanks = TanksQuery.ToEntityArray(Allocator.Temp);
-                Target = tanks[Random.NextInt(tanks.Length)];
+                var tankQuery = SystemAPI.QueryBuilder().WithAll<Tank>().Build();
+                var tanks = tankQuery.ToEntityArray(Allocator.Temp);
+                if (tanks.Length == 0)
+                {
+                    return;
+                }
+
+                target = tanks[random.NextInt(tanks.Length)];
             }
 
             var cameraTransform = CameraSingleton.Instance.transform;
-            var tankTransform = GetComponent<LocalToWorld>(Target);
-            cameraTransform.position = tankTransform.Position - 10.0f * tankTransform.Forward + new float3(0.0f, 5.0f, 0.0f);
-            cameraTransform.LookAt(tankTransform.Position, new float3(0.0f, 1.0f, 0.0f));
+            var tankTransform = SystemAPI.GetComponent<LocalToWorld>(target);
+            cameraTransform.position = tankTransform.Position;
+            cameraTransform.position -= 10.0f * (Vector3)tankTransform.Forward;  // move the camera back from the tank
+            cameraTransform.position += new Vector3(0, 5f, 0);  // raise the camera by an offset
+            cameraTransform.LookAt(tankTransform.Position);
         }
     }
+
     ```
 
 1. play 。会发现摄像机会跟随一个坦克。按下空格键会换一个坦克跟随。<p>
 ![](images/expected_result.gif)
 
 ## 结束
-
-计划后续添加基于 ECS 的优化。

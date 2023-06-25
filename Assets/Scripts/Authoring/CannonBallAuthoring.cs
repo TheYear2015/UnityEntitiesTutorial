@@ -8,13 +8,18 @@ class CannonBallAuthoring : UnityEngine.MonoBehaviour
     {
         public override void Bake(CannonBallAuthoring authoring)
         {
-            AddComponent<CannonBall>();
-            AddComponent<URPMaterialPropertyBaseColor>();
+            var entity = GetEntity(TransformUsageFlags.Dynamic);
+
+            // By default, components are zero-initialized,
+            // so the Velocity field of CannonBall will be float3.zero.
+            AddComponent<CannonBall>(entity);
+
+            AddComponent<URPMaterialPropertyBaseColor>(entity);
         }
     }
 }
 
-struct CannonBall : IComponentData
+public struct CannonBall : IComponentData
 {
-    public float3 Speed;
+    public float3 Velocity;
 }

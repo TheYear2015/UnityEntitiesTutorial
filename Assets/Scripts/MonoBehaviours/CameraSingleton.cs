@@ -1,11 +1,13 @@
-// There are many ways of getting access to the main camera, but the approach using
-// a singleton (as we use here) works for any kind of MonoBehaviour.
-class CameraSingleton : UnityEngine.MonoBehaviour
+// There are many ways of getting access to the main camera, but the approach here using
+// a singleton works for any kind of MonoBehaviour.
+using UnityEngine;
+
+public class CameraSingleton : MonoBehaviour
 {
-    public static UnityEngine.Camera Instance;
+    public static Camera Instance;
 
     void Awake()
     {
-        Instance = GetComponent<UnityEngine.Camera>();
+        Instance = GetComponent<Camera>();
     }
 }

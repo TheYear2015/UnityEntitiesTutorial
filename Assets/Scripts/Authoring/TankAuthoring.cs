@@ -1,12 +1,14 @@
 using Unity.Entities;
+using UnityEngine;
 
-class TankAuthoring : UnityEngine.MonoBehaviour
+class TankAuthoring : MonoBehaviour
 {
     class TankBaker : Baker<TankAuthoring>
     {
         public override void Bake(TankAuthoring authoring)
         {
-            AddComponent<Tank>();
+            var entity = GetEntity(TransformUsageFlags.Dynamic);
+            AddComponent<Tank>(entity);
         }
     }
 }

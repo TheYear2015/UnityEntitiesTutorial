@@ -1,18 +1,20 @@
 using Unity.Entities;
+using UnityEngine;
 
-class ConfigAuthoring : UnityEngine.MonoBehaviour
+public class ConfigAuthoring : MonoBehaviour
 {
-    public UnityEngine.GameObject TankPrefab;
+    public GameObject TankPrefab;
     public int TankCount;
     public float SafeZoneRadius;
 
-    class ConfigBaker : Baker<ConfigAuthoring>
+    class Baker : Baker<ConfigAuthoring>
     {
         public override void Bake(ConfigAuthoring authoring)
         {
-            AddComponent(new Config
+            var entity = GetEntity(TransformUsageFlags.None);
+            AddComponent(entity, new Config
             {
-                TankPrefab = GetEntity(authoring.TankPrefab),
+                TankPrefab = GetEntity(authoring.TankPrefab, TransformUsageFlags.Dynamic),
                 TankCount = authoring.TankCount,
                 SafeZoneRadius = authoring.SafeZoneRadius
             });
@@ -20,7 +22,7 @@ class ConfigAuthoring : UnityEngine.MonoBehaviour
     }
 }
 
-struct Config : IComponentData
+public struct Config : IComponentData
 {
     public Entity TankPrefab;
     public int TankCount;
